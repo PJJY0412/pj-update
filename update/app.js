@@ -1196,7 +1196,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const spk = document.getElementById('subj-speak');
     if (spk) spk.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._zhSpeak(String(w.pinyin || '').trim() || String(w.zi || ''));
+      this._zhSpeakSeq(String(w.zi || '').trim(), String(w.pinyin || '').trim());
     });
     this.updateTopBar();
   },
@@ -1304,8 +1304,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
     const self = this;
-    this._zhSpeak(this._zhdZiText(q));
-    document.getElementById('zh-replay').addEventListener('click', () => { self._zhSpeak(self._zhdZiText(q)); });
+    this._zhSpeakSeq(q.zi, q.pinyin);
+    document.getElementById('zh-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin); });
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
         const oi = parseInt(btn.dataset.oi);
@@ -1315,7 +1315,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   _zhdZiText(w) {
-    return String(w.zi || '').length === 1 ? (String(w.pinyin || '').trim() || String(w.zi || '')) : String(w.zi || '');
+    return String(w.zi || '').trim() || String(w.pinyin || '').trim();
   },
 
   _zhDailyListenDone() {
@@ -1397,7 +1397,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
     const self = this;
-    document.getElementById('zh-py-replay').addEventListener('click', () => { self._zhSpeak(String(q.pinyin).trim()); });
+    document.getElementById('zh-py-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin); });
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
         if (self.zhPyLocked) return;
@@ -1411,14 +1411,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
           self.zhPyCorrect++;
           btn.classList.add('correct');
           if (fb) fb.textContent = '✅ 太棒了！';
-          self._zhSpeak(correct);
+          self._zhSpeakSeq(q.zi, q.pinyin);
         } else {
           btn.classList.add('wrong');
           document.querySelectorAll('.zh-q-opt').forEach(b => {
             if (b.dataset.py === correct) b.classList.add('correct');
           });
           if (fb) fb.textContent = '❌ 读作「' + correct + '」';
-          self._zhSpeak('这个字读' + correct);
+          self._zhSpeakSeq(q.zi, q.pinyin);
         }
         const scoreEl = document.getElementById('zh-q-score');
         if (scoreEl) scoreEl.textContent = self.zhPyCorrect + ' / ' + (self.zhPyIdx + 1);
@@ -1500,7 +1500,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
     const self = this;
-    this._zhSpeak(self._zhdZiText(q));
+    this._zhSpeakSeq(q.zi, q.pinyin);
     document.querySelectorAll('.zh-bubble').forEach(el => {
       el.addEventListener('click', () => {
         if (self.zhBubbleDone) return;
@@ -1595,16 +1595,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   _zhSaySpeak(w) {
-    const self = this;
-    const isZi = String(w.zi).length === 1;
-    if (isZi) {
-      this._zhSpeak(String(w.pinyin || '').trim() || String(w.zi), function() {});
-    } else {
-      this._zhSpeak(String(w.zi), function() {
-        const py = String(w.pinyin || '');
-        if (py) self._zhSpeak(py, function() {});
-      });
-    }
+    this._zhSpeakSeq(w.zi, w.pinyin);
   },
 
   _zhSayDone() {
@@ -1664,7 +1655,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
     const self = this;
-    this._zhSpeak(self._zhdZiText(q), function(){});
+    this._zhSpeakSeq(q.zi, q.pinyin);
     document.querySelectorAll('.zh-fly').forEach(el => {
       el.addEventListener('click', () => {
         if (self.zhFlyDone) return;
@@ -7992,6 +7983,24 @@ var SUPER_PW = 'pj889988';
     this._ttsSpeak({ text: text, language: 'zh-CN', volume: 1, onEnd: onEnd, preventDedup: !!(opts && opts.preventDedup) });
   },
 
+  // 教学发音：先读汉字 → 再读拼音 → 最后"汉字+拼音"整体（每段之间停顿 500ms）
+  // 注：拼音（含声调）有道无音频，走 skipUrl 直进 speakTts/synth
+  _zhSpeakSeq(zi, py, onEnd) {
+    const self = this;
+    const ziT = String(zi || '').trim();
+    const pyT = String(py || '').trim();
+    const parts = [];
+    if (ziT) parts.push({ text: ziT, skipUrl: false });
+    if (pyT) parts.push({ text: pyT, skipUrl: true });
+    if (ziT && pyT) parts.push({ text: ziT + ' ' + pyT, skipUrl: true });
+    if (!parts.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
+    const run = function(i) {
+      if (i >= parts.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
+      self._ttsSpeak({ text: parts[i].text, language: 'zh-CN', volume: 1, skipUrl: parts[i].skipUrl, onEnd: function() { setTimeout(function() { run(i + 1); }, 500); } });
+    };
+    run(0);
+  },
+
   _zhExitBtn() {
     return '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
   },
@@ -8105,28 +8114,16 @@ var SUPER_PW = 'pj889988';
         }
       }, 500);
     };
-    const ziText = String(w.zi || '');
     const isPoem = self._zhUnitKind({ words: words }) === 'poem';
-    const isZi = String(ziText).length === 1 && !isPoem;
-    if (isZi) {
-      this._zhSpeak(String(w.pinyin || '').trim() || ziText, function() { setTimeout(finish, 300); });
-      return;
-    }
-    this._zhSpeak(ziText, function() {
-      const py = String(w.pinyin || '');
-      const body = String(w.yi || '');
-      setTimeout(function() {
-        if (!py) { finish(); return; }
-        self._zhSpeak(py, function() {
-          setTimeout(function() {
-            if (isPoem && body) {
-              self._zhSpeak(body, function() { setTimeout(finish, 150); });
-            } else {
-              finish();
-            }
-          }, 300);
-        });
-      }, 300);
+    const body = String(w.yi || '');
+    this._zhSpeakSeq(w.zi, w.pinyin, function() {
+      if (isPoem && body) {
+        setTimeout(function() {
+          self._zhSpeak(body, function() { setTimeout(finish, 150); });
+        }, 300);
+      } else {
+        setTimeout(finish, 300);
+      }
     });
   },
 
@@ -8473,8 +8470,7 @@ var SUPER_PW = 'pj889988';
     html += '</div></div>';
     main.innerHTML = html;
 
-    const ziText = String(q.zi || '').length === 1 && this._zhUnitKind({ words: words }) !== 'poem' ? (String(q.pinyin || '').trim() || String(q.zi || '')) : String(q.zi || '');
-    setTimeout(function() { self._zhSpeak(ziText); }, 200);
+    setTimeout(function() { self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
 
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -8509,7 +8505,7 @@ var SUPER_PW = 'pj889988';
       this.zhQuizCorrect++;
       if (fb) fb.textContent = '✅ 回答正确！' + correct.zi + ' ' + (correct.yi || '');
       optBtns[oi].classList.add('correct');
-      this._zhSpeak(String(correct.zi || '').length === 1 ? (String(correct.pinyin || '').trim() || String(correct.zi || '')) : String(correct.zi || ''));
+      this._zhSpeakSeq(correct.zi, correct.pinyin);
     } else {
       if (fb) fb.textContent = '❌ 答案是「' + correct.zi + '」';
       optBtns[oi].classList.add('wrong');
@@ -8517,7 +8513,7 @@ var SUPER_PW = 'pj889988';
         if (b.textContent.trim() === String(correct.zi)) b.classList.add('correct');
       });
       this._zhAddWrong(correct, this.zhQuizInfo);
-      this._zhSpeak('正确读法是' + (String(correct.zi || '').length === 1 ? (String(correct.pinyin || '').trim() || String(correct.zi || '')) : String(correct.zi || '')));
+      this._zhSpeakSeq(correct.zi, correct.pinyin);
     }
     this.zhQuizIdx++;
     const scoreEl = document.getElementById('zh-q-score');
@@ -8557,8 +8553,7 @@ var SUPER_PW = 'pj889988';
       html += '</div></div>';
       main.innerHTML = html;
       const self = this;
-      const ziText = String(q.zi || '').length === 1 && self._zhUnitKind({ words: words }) !== 'poem' ? (String(q.pinyin || '').trim() || String(q.zi || '')) : String(q.zi || '');
-      setTimeout(function() { self._zhSpeak(ziText); }, 200);
+      setTimeout(function() { self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
       document.querySelectorAll('.zh-q-opt').forEach(btn => {
         btn.addEventListener('click', () => {
           const oi = parseInt(btn.dataset.oi);
@@ -10614,6 +10609,7 @@ _ttsCancel() {
     const tryNative = function() {
       self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
     };
+    const skipUrl = !!opts.skipUrl;
     const continueChain = function() {
       if (!alive()) return;
       const inApk = !!(window.AndroidBackup && typeof window.AndroidBackup.speakTts === 'function');
@@ -10623,7 +10619,7 @@ _ttsCancel() {
         'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(text) + '&type=' + (zh ? 1 : 2)
       ];
       if (inApk) {
-        if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth) {
+        if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth && !skipUrl) {
           self._ttsTryJavaUrl(urls[0], vol, function() {
             if (alive()) self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
           }, finDone, 10000);
@@ -12174,4 +12170,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260820-1647';
+window.__SERVER_VER = '20260820-1650';
