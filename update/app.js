@@ -1480,7 +1480,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const q = words[idx];
     const pool = this._zhFillPool(words, 8);
     const spots = [];
-    const correctPos = Math.floor(Math.random() * pool.length);
+    let correctPos = 0;
+    for (let i = 0; i < pool.length; i++) { if (String(pool[i].zi).trim() === String(q.zi).trim()) { correctPos = i; break; } }
     pool.forEach((w, i) => {
       spots.push({ w: w, correct: i === correctPos, left: 3 + Math.random() * 70, top: 4 + Math.random() * 60, dur: 3 + Math.random() * 3, delay: -1 * Math.random() * 3 });
     });
@@ -7983,13 +7984,31 @@ var SUPER_PW = 'pj889988';
     this._ttsSpeak({ text: text, language: 'zh-CN', volume: 1, onEnd: onEnd, preventDedup: !!(opts && opts.preventDedup) });
   },
 
-  // 教学发音：先读汉字 → 再读拼音 → 最后"汉字+拼音"整体（每段之间停顿 500ms）
-  // 注：拼音（含声调）有道无音频，走 skipUrl 直进 speakTts/synth
+  // 教学发音：先读汉字 → 再读拼音（音节剥调，走有道真人音）→ 最后"汉字+拼音"整体（每段之间停顿 450ms）
+  // 注：带声调拼音（xǐ/huān）有道 500，剥调后（xi/huan）返回 200 真人音（1653 定案）；ü 保留（lü 200）
+  _zhStripTone(s) {
+    return String(s || '').replace(/[āáǎà]/g, 'a').replace(/[ēéěè]/g, 'e').replace(/[īíǐì]/g, 'i')
+      .replace(/[ōóǒò]/g, 'o').replace(/[ūúǔù]/g, 'u').replace(/[ǖǘǚǜ]/g, 'ü');
+  },
+
+  // 拼音逐音节朗读（剥调 → 有道真人音），供不含"汉字+整体"序列的场景（单元学习页）使用
+  _zhSpeakPy(py, onEnd) {
+    const self = this;
+    const syl = String(py || '').split(/[\s·,，、;；]+/).map(s => self._zhStripTone(s.trim())).filter(s => s && /[a-z]/i.test(s));
+    if (!syl.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
+    const gap = 350;
+    const run = function(i) {
+      if (i >= syl.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
+      self._ttsSpeak({ text: syl[i], language: 'zh-CN', volume: 1, skipUrl: false, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
+    };
+    run(0);
+  },
+
   _zhSpeakSeq(zi, py, onEnd) {
     const self = this;
     const ziT = String(zi || '').trim();
     const pyRaw = String(py || '').trim();
-    const pySyllables = pyRaw.split(/[\s·,，、;；]+/).map(s => s.trim()).filter(s => s && /[a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]/i.test(s));
+    const pySyllables = pyRaw.split(/[\s·,，、;；]+/).map(s => self._zhStripTone(s.trim())).filter(s => s && /[a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]/i.test(s));
     const parts = [];
     if (ziT) parts.push({ text: ziT, skipUrl: false });
     if (pySyllables.length) {
@@ -7997,7 +8016,7 @@ var SUPER_PW = 'pj889988';
         parts.push({ text: sy, skipUrl: false });
       });
     } else if (pyRaw) {
-      parts.push({ text: pyRaw, skipUrl: false });
+      parts.push({ text: pyRaw, skipUrl: true });
     }
     if (ziT) parts.push({ text: ziT, skipUrl: false });
     if (pySyllables.length) {
@@ -8151,13 +8170,14 @@ var SUPER_PW = 'pj889988';
     const isPoem = this._zhUnitKind({ words: words }) === 'poem';
     const isZi = String(zi).length === 1 && !isPoem;
     if (isZi) {
-      this._zhSpeak(String(py).trim() || zi);
+      if (py) { this._zhSpeakPy(py, function() {}); return; }
+      this._zhSpeak(String(zi).trim());
       return;
     }
     if (!py) { this._zhSpeak(zi); return; }
     this._zhSpeak(zi, function() {
       setTimeout(function() {
-        self._zhSpeak(py, function() {
+        self._zhSpeakPy(py, function() {
           setTimeout(function() {
             if (isPoem && body) self._zhSpeak(body);
           }, 300);
@@ -12184,4 +12204,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260820-1652';
+window.__SERVER_VER = '20260820-1655';
