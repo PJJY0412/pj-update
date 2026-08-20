@@ -7988,15 +7988,29 @@ var SUPER_PW = 'pj889988';
   _zhSpeakSeq(zi, py, onEnd) {
     const self = this;
     const ziT = String(zi || '').trim();
-    const pyT = String(py || '').trim();
+    const pyRaw = String(py || '').trim();
+    const pySyllables = pyRaw.split(/[\s·,，、;；]+/).map(s => s.trim()).filter(s => s && /[a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]/i.test(s));
     const parts = [];
     if (ziT) parts.push({ text: ziT, skipUrl: false });
-    if (pyT) parts.push({ text: pyT, skipUrl: true });
-    if (ziT && pyT) parts.push({ text: ziT + ' ' + pyT, skipUrl: true });
+    if (pySyllables.length) {
+      pySyllables.forEach(function(sy) {
+        parts.push({ text: sy, skipUrl: false });
+      });
+    } else if (pyRaw) {
+      parts.push({ text: pyRaw, skipUrl: false });
+    }
+    if (ziT) parts.push({ text: ziT, skipUrl: false });
+    if (pySyllables.length) {
+      pySyllables.forEach(function(sy) {
+        parts.push({ text: sy, skipUrl: false });
+      });
+    }
     if (!parts.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
+    const gap = 450;
     const run = function(i) {
       if (i >= parts.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
-      self._ttsSpeak({ text: parts[i].text, language: 'zh-CN', volume: 1, skipUrl: parts[i].skipUrl, onEnd: function() { setTimeout(function() { run(i + 1); }, 500); } });
+      const p = parts[i];
+      self._ttsSpeak({ text: p.text, language: 'zh-CN', volume: 1, skipUrl: p.skipUrl, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
     };
     run(0);
   },
@@ -8418,11 +8432,11 @@ var SUPER_PW = 'pj889988';
       tryNext();
     }, 8000);
     if (spk) {
-      self._zhSpeak(spk, function() {
+      self._zhStrokeSpeak(spk, function() {
         if (moved || !self.zhStrokePlaying) return;
         ttsDone = true;
         tryNext();
-      }, { preventDedup: true });
+      });
     } else {
       ttsDone = true;
     }
@@ -12170,4 +12184,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260820-1650';
+window.__SERVER_VER = '20260820-1652';
