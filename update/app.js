@@ -3767,14 +3767,14 @@ _renderAdminScan() {
     let html = '<div class="admin-section">';
 
     html += '<p style="margin:0 0 10px;font-size:13px;color:var(--text-light)">点击学员，扫描其纸质作业并整理错题</p>';
-    html += '<div style="display:flex;gap:8px;margin-bottom:12px">';
     const weekCount = Storage.getWeekWrongs().length;
-    html += '<button class="login-btn" id="open-week" style="flex:1.2">📥 本周错题' + (weekCount ? '（' + weekCount + ' 条）' : '') + '</button>';
-    html += '<button class="admin-gen-btn" id="open-archive" style="flex:1">📂 个人错题库</button>';
+    html += '<div class="scan-grid2">';
+    html += '<button class="scan-card" id="open-week"><span class="scan-card-ico-sm">📋</span><span class="scan-card-name">本周错题' + (weekCount ? ' ' + weekCount + ' 题' : '') + '</span><span class="scan-card-hint">本周扫描勾选汇总</span></button>';
+    html += '<button class="scan-card" id="open-archive"><span class="scan-card-ico-sm">🗂️</span><span class="scan-card-name">个人错题库</span><span class="scan-card-hint">按学员归档</span></button>';
+    html += '<button class="scan-card" id="open-public"><span class="scan-card-ico-sm">🏦</span><span class="scan-card-name">公共错题库</span><span class="scan-card-hint">年级共享 · 新增/导入</span></button>';
+    html += '<button class="scan-card" id="recv-wrong"><span class="scan-card-ico-sm">📥</span><span class="scan-card-name">接收电脑错题</span><span class="scan-card-hint">局域网一键拉取</span></button>';
     html += '</div>';
-    html += '<button class="login-btn" id="open-public" style="width:100%;margin-bottom:12px">🌐 公共错题库（接收/导入）</button>';
-    html += '<button class="admin-gen-btn" id="recv-wrong" style="width:100%;margin-bottom:12px">📥 从电脑接收错题</button>';
-    html += '<button class="admin-gen-btn" id="open-task" style="width:100%;margin-bottom:12px">📤 下发练习（到学员平板）</button>';
+    html += '<button class="scan-btn-main" id="open-task" style="margin-bottom:12px">📤 下发练习任务（发到学员平板）</button>';
     html += '<div id="recv-panel"></div>';
 if (students.length === 0) {
       const adminGrades = Storage.getAdminGrades();
@@ -3783,16 +3783,18 @@ if (students.length === 0) {
       container.innerHTML = html;
       return;
     }
+    html += '<div class="scan-sec-title"><h4>👥 学员（点击进入扫描）</h4></div>';
     students.forEach(s => {
       const grade = Storage.getCurrentGrade(s);
       const works = Storage.getScanWorks(s.id);
       const wrongs = Storage.getWrongQuestions(s.id);
-      html += '<div class="asc-item" style="cursor:pointer" data-sid="' + s.id + '">';
-      html += '<div style="flex:1">';
-      html += '<div class="asc-val">' + this._h(s.name) + '</div>';
-      html += '<div class="asc-lbl">' + grade + '年级 · 扫描 ' + works.length + ' 份 · 错题 ' + wrongs.length + ' 题</div>';
+      html += '<div class="scan-work-item" data-sid="' + s.id + '">';
+      html += '<div class="scan-work-badge">' + this._h((s.name || '?').slice(0, 1)) + '</div>';
+      html += '<div class="scan-work-main">';
+      html += '<div class="scan-work-title">' + this._h(s.name) + '</div>';
+      html += '<div class="scan-work-sub">' + grade + '年级 · 扫描 ' + works.length + ' 份 · 错题 ' + wrongs.length + ' 题</div>';
       html += '</div>';
-      html += '<span style="color:var(--primary);font-size:13px">📷 扫描/错题</span>';
+      html += '<span class="scan-work-arrow">📷 ›</span>';
       html += '</div>';
     });
     html += '</div>';
@@ -3811,7 +3813,7 @@ if (students.length === 0) {
     const pubBtn = document.getElementById('open-public');
     if (pubBtn) pubBtn.addEventListener('click', () => this._renderPublicWrongBank());
 
-    container.querySelectorAll('.asc-item').forEach(item => {
+    container.querySelectorAll('.scan-work-item[data-sid]').forEach(item => {
       item.addEventListener('click', () => {
         this._renderScanPage(parseInt(item.dataset.sid));
       });
@@ -4082,34 +4084,38 @@ const name = s2 ? s2.name : '';
 
     let html = '<div class="admin-section">';
     html += '<button class="back-btn" onclick="App._renderAdminScan()">← 返回上一级</button>';
-    html += '<h3 style="margin:10px 0">📷 ' + this._h(student.name) + ' · 扫描入库</h3>';
-
-    html += '<div style="display:flex;flex-direction:column;gap:10px;margin:10px 0">';
-    html += '<button class="daily-mode-btn" data-subj="english" style="background:#2E7D32">📗 英语作业扫描</button>';
-    html += '<button class="daily-mode-btn" data-subj="chinese" style="background:#C62828">📘 语文作业扫描</button>';
-    html += '<button class="daily-mode-btn" data-subj="math" style="background:#E65100">📙 数学作业扫描</button>';
+    html += '<h3 style="margin:10px 0 2px">📷 ' + this._h(student.name) + ' · 扫描入库</h3>';
+    html += '<div class="scan-chiprow">';
+    html += '<span class="scan-chip">📄 已扫描 ' + works.length + ' 份</span>';
+    html += '<span class="scan-chip">❌ 错题 ' + wrongs.length + ' 题</span>';
     html += '</div>';
 
-    html += '<div style="margin:14px 0;padding:12px 14px;background:#F5F7FA;border-radius:10px;font-size:12px;color:var(--text-light)">';
-    html += 'ℹ️ 识别需平板联网，识别结果请老师校对后保存入库';
+    html += '<div class="scan-grid3">';
+    html += '<button class="scan-card" data-subj="english"><span class="scan-card-ico">📗</span><span class="scan-card-name">英语作业</span><span class="scan-card-hint">拍照识别</span></button>';
+    html += '<button class="scan-card" data-subj="chinese"><span class="scan-card-ico">📘</span><span class="scan-card-name">语文作业</span><span class="scan-card-hint">拍照识别</span></button>';
+    html += '<button class="scan-card" data-subj="math"><span class="scan-card-ico">📙</span><span class="scan-card-name">数学作业</span><span class="scan-card-hint">拍照识别</span></button>';
     html += '</div>';
 
-    html += '<h4 style="margin:12px 0 6px;color:var(--primary)">已扫描作业</h4>';
+    html += '<div class="scan-tip">ℹ️ 识别需平板联网。流程：选科目 → 拍照 → 识别 → 老师校对 → 保存入库 / 勾选错题</div>';
+
+    html += '<div class="scan-sec-title"><h4>📄 已扫描作业</h4></div>';
     if (works.length === 0) {
-      html += '<div style="padding:12px;font-size:13px;color:var(--text-muted)">暂无扫描记录</div>';
+      html += '<div class="scan-empty">暂无扫描记录，点上方科目卡片开始</div>';
     } else {
+      const subjIco = { english: '📗', chinese: '📘', math: '📙' };
       works.slice().reverse().forEach(w => {
-        html += '<div class="asc-item" data-wid="' + w.id + '">';
-        html += '<div style="flex:1">';
-        html += '<div class="asc-val">' + this._subjName(w.subject) + ' · ' + new Date(w.createdAt).toLocaleString('zh-CN') + '</div>';
-        html += '<div class="asc-lbl" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80vw">' + this._h((w.text || '').slice(0, 60)) + '</div>';
+        html += '<div class="scan-work-item static">';
+        html += '<div class="scan-work-badge">' + (subjIco[w.subject] || '📄') + '</div>';
+        html += '<div class="scan-work-main">';
+        html += '<div class="scan-work-title">' + this._subjName(w.subject) + ' · ' + new Date(w.createdAt).toLocaleString('zh-CN') + '</div>';
+        html += '<div class="scan-work-sub">' + this._h((w.text || '').slice(0, 60)) + '</div>';
         html += '</div>';
-        html += '<span style="color:#C62828;font-size:14px;cursor:pointer" data-delwork="' + w.id + '">🗑</span>';
+        html += '<button class="scan-work-del" data-delwork="' + w.id + '" title="删除">🗑</button>';
         html += '</div>';
       });
     }
 
-    html += '<h4 style="margin:14px 0 6px;color:var(--primary)">错题库</h4>';
+    html += '<div class="scan-sec-title"><h4>❌ 错题库（' + wrongs.length + ' 题）</h4><button class="scan-mini-btn" id="open-wrong-mgr">管理错题 ›</button></div>';
 
     html += '</div>';
     container.innerHTML = html;
@@ -4127,6 +4133,9 @@ const name = s2 ? s2.name : '';
         this._renderScanPage(studentId);
       });
     });
+
+    const wmBtn = document.getElementById('open-wrong-mgr');
+    if (wmBtn) wmBtn.addEventListener('click', () => this._renderWrongArchive());
 
   },
 
@@ -6941,22 +6950,28 @@ _loadAnswers() {
 
     let html = '<div class="admin-section">';
     html += '<button class="back-btn" onclick="App._renderScanPage(' + studentId + ')">← 返回上一级</button>';
-    html += '<h3 style="margin:10px 0">📷 ' + this._subjName(subject) + '作业扫描 · ' + this._h(student.name) + '</h3>';
+    html += '<h3 style="margin:10px 0 2px">📷 ' + this._subjName(subject) + '作业扫描 · ' + this._h(student.name) + '</h3>';
 
-    html += '<button class="daily-mode-btn" id="scan-take" style="width:100%">📸 拍照扫描</button>';
+    html += '<div class="scan-steps">';
+    html += '<div class="scan-step" id="scan-step-1">① 拍照</div>';
+    html += '<div class="scan-step" id="scan-step-2">② 识别</div>';
+    html += '<div class="scan-step" id="scan-step-3">③ 校对入库</div>';
+    html += '</div>';
+
+    html += '<button class="scan-btn-main" id="scan-take">📸 拍照扫描</button>';
     html += '<input type="file" id="scan-file-input" accept="image/*" capture="environment" style="display:none">';
 
-    html += '<div id="scan-img-wrap" style="margin:12px 0;display:none"><img id="scan-img" style="width:100%;border-radius:10px;border:1px solid #EEE"></div>';
+    html += '<div id="scan-img-wrap" style="margin:12px 0;display:none"><img id="scan-img" style="width:100%;border-radius:12px;border:1px solid var(--border)"></div>';
 
-    html += '<button class="daily-mode-btn" id="scan-ocr" style="width:100%;background:#1565C0;display:none">🔍 开始识别</button>';
+    html += '<button class="scan-btn-blue" id="scan-ocr" style="display:none;margin-top:10px">🔍 开始识别</button>';
     html += '<div id="scan-status" style="font-size:12px;color:var(--text-light);margin:8px 0;min-height:18px"></div>';
 
-    html += '<h4 style="margin:10px 0 6px;color:var(--primary)">识别结果（可编辑）</h4>';
-    html += '<textarea id="scan-text" rows="10" style="width:100%;border:1px solid #DDD;border-radius:10px;padding:10px;font-size:14px;box-sizing:border-box" placeholder="拍照识别后，文字将显示在这里，可直接修改成正式文档"></textarea>';
+    html += '<h4 style="margin:12px 0 6px;color:var(--primary-dark)">📝 识别结果（可编辑）</h4>';
+    html += '<textarea id="scan-text" rows="10" class="scan-textarea" placeholder="拍照识别后，文字将显示在这里，可直接修改成正式文档"></textarea>';
 
-    html += '<div style="display:flex;gap:10px;margin-top:10px">';
-    html += '<button class="login-btn" id="scan-save" style="flex:1">💾 保存为作业文档</button>';
-    html += '<button class="admin-gen-btn" id="scan-pick-wrong" style="flex:1">❌ 勾选错题</button>';
+    html += '<div class="scan-actions">';
+    html += '<button class="login-btn" id="scan-save" style="flex:1.3;width:auto;padding:13px 8px;font-size:15px">💾 保存为作业文档</button>';
+    html += '<button class="scan-btn-warn" id="scan-pick-wrong" style="flex:1">❌ 勾选错题</button>';
     html += '</div>';
 
     html += '<div id="scan-wrong-list" style="margin-top:12px"></div>';
@@ -6968,6 +6983,7 @@ _loadAnswers() {
     const imgWrap = document.getElementById('scan-img-wrap');
     const ocrBtn = document.getElementById('scan-ocr');
     const status = document.getElementById('scan-status');
+    const takeBtn = document.getElementById('scan-take');
 
     document.getElementById('scan-take').addEventListener('click', () => {
       document.getElementById('scan-file-input').click();
@@ -6991,7 +7007,10 @@ _loadAnswers() {
           img.src = canvas.toDataURL('image/jpeg', 0.85);
           imgWrap.style.display = 'block';
           ocrBtn.style.display = 'block';
-          status.textContent = '图片已就绪，点击"开始识别"';
+          takeBtn.innerHTML = '📸 重新拍照';
+          const st1 = document.getElementById('scan-step-1'); if (st1) st1.classList.add('on');
+          const st2 = document.getElementById('scan-step-2'); if (st2) st2.classList.add('on');
+          status.textContent = '✅ 图片已就绪，点击"开始识别"';
         };
         image.onerror = () => { status.textContent = '图片读取失败'; };
         image.src = reader.result;
@@ -6999,7 +7018,11 @@ _loadAnswers() {
       reader.readAsDataURL(file);
     });
 
-    ocrBtn.addEventListener('click', () => this._runOcr(status));
+    ocrBtn.addEventListener('click', () => {
+      const st2 = document.getElementById('scan-step-2'); if (st2) st2.classList.remove('on');
+      const st3 = document.getElementById('scan-step-3'); if (st3) st3.classList.add('on');
+      this._runOcr(status);
+    });
 
     document.getElementById('scan-save').addEventListener('click', () => {
       const text = document.getElementById('scan-text').value.trim();
@@ -11867,10 +11890,11 @@ _ttsCancel() {
         'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(text) + '&type=' + (zh ? 1 : 2)
       ];
       if (inApk) {
-        if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth && !skipUrl) {
+        if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth && !skipUrl && Date.now() > (self._urlHangUntil || 0)) {
+          const urlTimeout = Math.max(4000, Math.min(10000, 1500 + text.length * 500));
           self._ttsTryJavaUrl(urls[0], vol, function() {
             if (alive()) self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
-          }, finDone, 10000);
+          }, finDone, urlTimeout);
           return;
         }
         self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
@@ -12004,7 +12028,8 @@ _ttsCancel() {
               self._ttsNativeEndCb = null;
               self._ttsNativeFailCb = null;
               self._ttsNativeGuard = null;
-              if (onDone) onDone();
+              try { self._urlHangUntil = Date.now() + 60000; self._ttsDiag.push('真人超时'); } catch(e) {}
+              if (onFail) onFail();
             }
           }, t);
           this._ttsNativeGuard = guard;
@@ -13418,4 +13443,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260821-1661';
+window.__SERVER_VER = '20260821-1662';
