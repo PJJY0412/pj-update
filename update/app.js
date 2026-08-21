@@ -1196,7 +1196,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const spk = document.getElementById('subj-speak');
     if (spk) spk.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._zhSpeakSeq(String(w.zi || '').trim(), String(w.pinyin || '').trim());
+      this._zhSpeakSeq(String(w.zi || '').trim(), String(w.pinyin || '').trim(), null, { skipUrl: true });
     });
     this.updateTopBar();
   },
@@ -1231,7 +1231,6 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       { k: 'listen', icon: '🎧', t: '听音选字', d: '听声音找对字' },
       { k: 'pinyin', icon: '✍️', t: '拼音训练营', d: '看字选对拼音' },
       { k: 'match', icon: '🧩', t: '识字配对', d: '字和意思连连看' },
-      { k: 'bubble', icon: '🎈', t: '跳跳找字', d: '在泡泡里找它' },
       { k: 'say', icon: '🎲', t: '组词造句秀', d: '动脑开口讲一讲' },
       { k: 'fly', icon: '🪰', t: '拍苍蝇', d: '听读音拍中它' }
     ];
@@ -1246,11 +1245,10 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       btn.addEventListener('click', () => {
         const k = btn.dataset.k;
         this.zhDailyMode = k;
-        if (k === 'fc') this.renderSubjectCards('chinese');
+        if (k === 'fc') this.startZhFcGame();
         else if (k === 'listen') this.startZhDailyListen();
         else if (k === 'pinyin') this.startZhPyQuiz();
         else if (k === 'match') this.startMatchGame(null, words);
-        else if (k === 'bubble') this.startZhBubble();
         else if (k === 'say') this.startZhSay();
         else if (k === 'fly') this.startZhFly();
       });
@@ -1259,8 +1257,164 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   _zhdColor(k) {
-    const map = { fc: '#FFF3E0', listen: '#E3F2FD', pinyin: '#E8F5E9', match: '#F3E5F5', bubble: '#FFFDE7', say: '#FFEBEE', fly: '#E0F7FA' };
+    const map = { fc: '#FFF3E0', listen: '#E3F2FD', pinyin: '#E8F5E9', match: '#F3E5F5', say: '#FFEBEE', fly: '#E0F7FA' };
     return map[k] || '#FFF';
+  },
+
+  // 🃏 认读翻卡（A+E：自评闯关 + 单字笔顺演示）
+  startZhFcGame() {
+    let words = (this.zhDailyWords || []).filter(w => String(w.zi || '').trim());
+    if (!words.length && this.currentStudent) {
+      try { words = this.getHomeworkWords(Storage.getHomeworkZh(this.currentStudent.id), 'chinese').filter(w => String(w.zi || '').trim()); } catch (e) {}
+    }
+    if (!words.length) { this.renderZhDailyModes(); return; }
+    this._zhFcCleanup();
+    this._zhFc = {
+      words: words,
+      deck: words.map((w, i) => i),
+      pos: 0,
+      flipped: false,
+      seenOnce: {},
+      cleared: {},
+      firstOk: 0,
+      relearn: {},
+      seqDone: false
+    };
+    this.currentView = 'zhFc';
+    this._zhFcRender();
+    this.updateTopBar();
+  },
+
+  _zhFcCleanup() {
+    this._zhStrokeReset();
+    this.stopSpeaking();
+  },
+
+  _zhFcLeave() {
+    this._zhFcCleanup();
+    this.renderZhDailyModes();
+  },
+
+  _zhFcRender() {
+    const f = this._zhFc;
+    if (!f || f.pos >= f.deck.length) { this._zhFcDone(); return; }
+    const w = f.words[f.deck[f.pos]];
+    const main = document.getElementById('main-content');
+    const total = f.words.length;
+    const cleared = Object.keys(f.cleared).length;
+    let html = '<div class="reading-container">';
+    html += '<button class="back-btn" onclick="App._zhFcLeave()">← 返回语文作业</button>';
+    html += '<h2 class="course-title">🃏 认读翻卡</h2>';
+    html += '<div style="padding:0 16px">';
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--text-light)">'
+      + '<div style="flex:1;height:8px;background:#ECEFF1;border-radius:4px;overflow:hidden"><div style="width:' + Math.round(cleared / total * 100) + '%;height:100%;background:#66BB6A;transition:width .3s"></div></div>'
+      + '<span style="white-space:nowrap">' + cleared + ' / ' + total + ' 词</span></div>';
+    if (!f.flipped) {
+      const ziLen = String(w.zi || '').length;
+      html += '<div id="zh-fc-card" style="min-height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#FFF;border:2px solid #FFCC80;border-radius:16px;box-shadow:0 4px 14px rgba(0,0,0,.06);cursor:pointer">'
+        + '<div style="font-size:' + (ziLen > 1 ? '46px' : '72px') + ';font-weight:700;letter-spacing:' + (ziLen > 1 ? '6px' : '0') + ';color:#37474F">' + this._h(w.zi) + '</div>'
+        + '<div style="margin-top:16px;font-size:14px;color:#90A4AE">想一想：它怎么读？点卡片看答案</div>'
+        + '</div>';
+    } else {
+      const isSingle = String(w.zi || '').trim().length === 1;
+      html += '<div style="background:#FFF;border:2px solid #A5D6A7;border-radius:16px;padding:16px;box-shadow:0 4px 14px rgba(0,0,0,.06)">'
+        + '<div style="text-align:center"><span style="font-size:44px;font-weight:700;color:#2E7D32">' + this._h(w.zi) + '</span>'
+        + (w.pinyin ? '<span style="font-size:22px;color:#E65100;margin-left:12px">' + this._h(String(w.pinyin)) + '</span>' : '')
+        + '</div>'
+        + (w.yi ? '<div style="text-align:center;margin-top:6px;font-size:16px;color:#5D4037">' + this._h(w.yi) + '</div>' : '')
+        + (isSingle ? '<div class="zh-demo-wrap" id="zh-fc-demo" style="margin-top:10px"></div>' : '')
+        + '</div>';
+      html += '<div style="display:flex;gap:12px;margin-top:16px">'
+        + '<button class="login-btn" id="zh-fc-ok" style="flex:1;background:#43A047">😊 会读啦</button>'
+        + '<button class="login-btn" id="zh-fc-again" style="flex:1;background:#EF5350">😮 再学一遍</button>'
+        + '</div>';
+    }
+    html += '</div></div>';
+    main.innerHTML = html;
+
+    const self = this;
+    if (!f.flipped) {
+      document.getElementById('zh-fc-card').addEventListener('click', () => {
+        f.flipped = true;
+        f.seqDone = false;
+        this._zhFcRender();
+      });
+      return;
+    }
+
+    const zi = String(w.zi || '').trim();
+    const py = String(w.pinyin || '').trim();
+    const tryAutoStroke = function() {
+      if (!self._zhFc || !self._zhFc.seqDone || !self._zhFc.flipped) return;
+      const pb = document.getElementById('zh-play-btn');
+      if (pb) { try { pb.click(); } catch (e) {} }
+    };
+    this._zhSpeakSeq(zi, py, function() {
+      if (!self._zhFc || !self._zhFc.flipped) return;
+      self._zhFc.seqDone = true;
+      tryAutoStroke();
+    }, { skipUrl: true });
+    if (isSingle) {
+      this._ensureZhStrokes(function() {
+        if (!self._zhFc || !self._zhFc.flipped) return;
+        self._zhDemoRender(document.getElementById('zh-fc-demo'), zi);
+        tryAutoStroke();
+      });
+    }
+    document.getElementById('zh-fc-ok').addEventListener('click', () => this._zhFcJudge(true));
+    document.getElementById('zh-fc-again').addEventListener('click', () => this._zhFcJudge(false));
+  },
+
+  _zhFcJudge(ok) {
+    const f = this._zhFc;
+    if (!f || f.pos >= f.deck.length) return;
+    const idx = f.deck[f.pos];
+    const w = f.words[idx];
+    this._zhFcCleanup();
+    if (!f.seenOnce[idx]) {
+      f.seenOnce[idx] = true;
+      if (ok) f.firstOk++;
+    }
+    if (ok) {
+      f.cleared[idx] = true;
+    } else {
+      f.relearn[idx] = true;
+      try { Storage.addWrongWord(String(w.zi || ''), String(w.yi || w.pinyin || ''), 0, '每天必练·语文'); } catch (e) {}
+      f.deck.push(idx);
+    }
+    f.pos++;
+    f.flipped = false;
+    this._zhFcRender();
+  },
+
+  _zhFcDone() {
+    const f = this._zhFc;
+    this._zhFcCleanup();
+    if (!f) { this.renderZhDailyModes(); return; }
+    const total = f.words.length;
+    const ratio = total ? f.firstOk / total : 0;
+    const stars = ratio >= 0.9 ? 3 : ratio >= 0.6 ? 2 : 1;
+    const relearnZis = Object.keys(f.relearn).map(i => String(f.words[i].zi || '')).filter(z => z);
+    let html = '<div class="reading-container">';
+    html += '<button class="back-btn" onclick="App._zhFcLeave()">← 返回语文作业</button>';
+    html += '<h2 class="course-title">🎯 翻卡完成</h2>';
+    html += '<div style="padding:0 16px;text-align:center">';
+    html += '<div style="font-size:44px;margin:10px 0">' + '⭐'.repeat(stars) + '<span style="opacity:.25">' + '⭐'.repeat(3 - stars) + '</span></div>';
+    html += '<div style="font-size:16px;color:#37474F">一共 <strong>' + total + '</strong> 个词，一遍就读会的有 <strong style="color:#2E7D32">' + f.firstOk + '</strong> 个</div>';
+    if (relearnZis.length) {
+      html += '<div style="margin:14px auto;padding:10px 14px;background:#FFF3E0;border:1px solid #FFCC80;border-radius:10px;font-size:14px;color:#E65100;max-width:420px">'
+        + '🔁 这些词再学了一遍：<br><strong style="font-size:18px;letter-spacing:4px">' + this._h(relearnZis.join('、')) + '</strong></div>';
+    } else {
+      html += '<div style="margin:14px auto;font-size:15px;color:#2E7D32">全部一遍就过，太棒了！🎉</div>';
+    }
+    html += '<div style="display:flex;gap:12px;margin-top:18px">'
+      + '<button class="login-btn" id="zh-fc-retry" style="flex:1">🔁 再练一遍</button>'
+      + '<button class="admin-gen-btn" id="zh-fc-back" style="flex:1">📚 返回语文作业</button>'
+      + '</div>';
+    html += '</div></div>';
+    main.innerHTML = html;
+    document.getElementById('zh-fc-retry').addEventListener('click', () => this.startZhFcGame());
+    document.getElementById('zh-fc-back').addEventListener('click', () => this._zhFcLeave());
   },
 
   // 🎧 听音选字（语文作业版）
@@ -1304,8 +1458,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
     const self = this;
-    this._zhSpeakSeq(q.zi, q.pinyin);
-    document.getElementById('zh-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin); });
+    this._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true });
+    document.getElementById('zh-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true }); });
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
         const oi = parseInt(btn.dataset.oi);
@@ -1348,6 +1502,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     this.zhPyCorrect = 0;
     this.zhPyTotal = uniq.length;
     this.zhPyLocked = false;
+    this.zhPyAnswered = {};
+    if (this._zhPyTimer) { clearTimeout(this._zhPyTimer); this._zhPyTimer = null; }
     this.currentView = 'zhPy';
     this._zhPyRender();
   },
@@ -1355,18 +1511,30 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _zhPickPinyins(words, correctIdx, n) {
     const correct = String(words[correctIdx].pinyin).trim();
     const opts = [correct];
+    const seen = {};
+    seen[correct] = true;
     const pool = [];
     words.forEach((w, i) => {
       if (i === correctIdx) return;
       const p = String(w.pinyin).trim();
-      if (p && pool.indexOf(p) < 0) pool.push(p);
+      if (p && !seen[p]) { seen[p] = true; pool.push(p); }
     });
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
     }
     for (let i = 0; i < pool.length && opts.length < n; i++) opts.push(pool[i]);
-    while (opts.length < n) opts.push(correct);
+    if (opts.length < n) {
+      const fallback = ['bā','mā','dà','xiǎo','shàng','xià','rén','kǒu','mù','shuǐ','huǒ','shān','shí','tiān','dì','yuè','rì','niǎo','yú','chē','mǎ','yī','èr','sān'];
+      for (let i = fallback.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = fallback[i]; fallback[i] = fallback[j]; fallback[j] = t;
+      }
+      for (let i = 0; i < fallback.length && opts.length < n; i++) {
+        const p = fallback[i];
+        if (!seen[p]) { seen[p] = true; opts.push(p); }
+      }
+    }
     for (let i = opts.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       const t = opts[i]; opts[i] = opts[j]; opts[j] = t;
@@ -1376,11 +1544,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
 
   _zhPyRender() {
     const main = document.getElementById('main-content');
+    const self = this;
     const idx = this.zhPyIdx;
     const words = this.zhPyWords;
     if (idx >= words.length) { this._zhPyDone(); return; }
     const q = words[idx];
     const opts = this._zhPickPinyins(words, idx, 4);
+    const correct = String(q.pinyin).trim();
+    const ans = this.zhPyAnswered[idx];
     let html = '<div class="reading-container">';
     html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
     html += '<h2 class="reading-title">✍️ 拼音训练营</h2>';
@@ -1391,39 +1562,67 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       html += '<button class="zh-q-opt" data-oi="' + i + '" data-py="' + p + '">' + p + '</button>';
     });
     html += '</div>';
-    html += '<div class="zh-q-fb" id="zh-q-fb">选一选，这个字读什么？</div>';
-    html += '<div class="zh-q-score" id="zh-q-score">' + this.zhPyCorrect + ' / ' + this.zhPyIdx + '</div>';
+    let fbText = '选一选，这个字读什么？';
+    if (ans) fbText = ans.ok ? '✅ 太棒了！' : ('❌ 读作「' + correct + '」');
+    html += '<div class="zh-q-fb" id="zh-q-fb">' + fbText + '</div>';
+    html += '<div class="zh-q-score" id="zh-q-score">' + this.zhPyCorrect + ' / ' + Object.keys(this.zhPyAnswered).length + '</div>';
     html += '<button class="reading-ctrl-btn" id="zh-py-replay" style="margin-top:10px">🔊 提示读音</button>';
+    html += '<div style="display:flex;gap:10px;justify-content:center;margin-top:12px">';
+    html += '<button class="reading-ctrl-btn" id="zh-py-prev"' + (idx <= 0 ? ' disabled' : '') + '>⬅ 上一个</button>';
+    html += '<button class="reading-ctrl-btn" id="zh-py-next">' + (idx >= words.length - 1 ? '完成 ✓' : '下一个 ➡') + '</button>';
+    html += '</div>';
     html += '</div></div>';
     main.innerHTML = html;
-    const self = this;
-    document.getElementById('zh-py-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin); });
+
+    if (ans) {
+      document.querySelectorAll('.zh-q-opt').forEach(b => {
+        b.disabled = true;
+        if (b.dataset.py === correct) b.classList.add('correct');
+        else if (!ans.ok && b.dataset.py === ans.picked) b.classList.add('wrong');
+      });
+    }
+    document.getElementById('zh-py-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true }); });
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
-        if (self.zhPyLocked) return;
+        if (self.zhPyLocked || self.zhPyAnswered[idx]) return;
         self.zhPyLocked = true;
         const fb = document.getElementById('zh-q-fb');
-        const correct = String(q.pinyin).trim();
         const picked = btn.dataset.py;
         document.querySelectorAll('.zh-q-opt').forEach(b => b.disabled = true);
         const ok = picked === correct;
+        self.zhPyAnswered[idx] = { ok: ok, picked: picked };
         if (ok) {
           self.zhPyCorrect++;
           btn.classList.add('correct');
           if (fb) fb.textContent = '✅ 太棒了！';
-          self._zhSpeakSeq(q.zi, q.pinyin);
         } else {
           btn.classList.add('wrong');
           document.querySelectorAll('.zh-q-opt').forEach(b => {
             if (b.dataset.py === correct) b.classList.add('correct');
           });
           if (fb) fb.textContent = '❌ 读作「' + correct + '」';
-          self._zhSpeakSeq(q.zi, q.pinyin);
         }
+        self._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true });
         const scoreEl = document.getElementById('zh-q-score');
-        if (scoreEl) scoreEl.textContent = self.zhPyCorrect + ' / ' + (self.zhPyIdx + 1);
-        setTimeout(function() { self.zhPyIdx++; self.zhPyLocked = false; self._zhPyRender(); }, 1300);
+        if (scoreEl) scoreEl.textContent = self.zhPyCorrect + ' / ' + Object.keys(self.zhPyAnswered).length;
+        self._zhPyTimer = setTimeout(function() { self._zhPyTimer = null; self.zhPyIdx++; self.zhPyLocked = false; self._zhPyRender(); }, 1300);
       });
+    });
+    const prevBtn = document.getElementById('zh-py-prev');
+    if (prevBtn) prevBtn.addEventListener('click', function() {
+      if (idx <= 0) return;
+      if (self._zhPyTimer) { clearTimeout(self._zhPyTimer); self._zhPyTimer = null; }
+      self.stopSpeaking();
+      self.zhPyLocked = false;
+      self.zhPyIdx = idx - 1;
+      self._zhPyRender();
+    });
+    document.getElementById('zh-py-next').addEventListener('click', function() {
+      if (self._zhPyTimer) { clearTimeout(self._zhPyTimer); self._zhPyTimer = null; }
+      self.stopSpeaking();
+      self.zhPyLocked = false;
+      self.zhPyIdx = idx + 1;
+      self._zhPyRender();
     });
   },
 
@@ -1596,7 +1795,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   _zhSaySpeak(w) {
-    this._zhSpeakSeq(w.zi, w.pinyin);
+    this._zhSpeakSeq(w.zi, w.pinyin, null, { skipUrl: true });
   },
 
   _zhSayDone() {
@@ -1656,7 +1855,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
     const self = this;
-    this._zhSpeakSeq(q.zi, q.pinyin);
+    this._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true });
     document.querySelectorAll('.zh-fly').forEach(el => {
       el.addEventListener('click', () => {
         if (self.zhFlyDone) return;
@@ -2254,6 +2453,9 @@ main.innerHTML = html;
     html += '<span>👨‍🏫 本机负责年级：<strong id="admin-grade-label">' + gradeLabel + '</strong></span>';
     html += '<button class="login-btn" id="btn-admin-pick-grade" style="padding:6px 14px;font-size:13px;width:auto;flex-shrink:0">选择年级</button>';
     html += '</div>';
+    html += '<div style="margin-top:8px">';
+    html += '<input type="text" class="login-input" id="login-upd-host" placeholder="电脑 IP，如 192.168.1.100" value="' + this._h(this._getSavedHost()) + '" autocomplete="off">';
+    html += '</div>';
     main.innerHTML = html;
 
     document.getElementById('atab-codes').addEventListener('click', () => {
@@ -2289,6 +2491,8 @@ main.innerHTML = html;
 
     const pickBtn = document.getElementById('btn-admin-pick-grade');
     if (pickBtn) pickBtn.addEventListener('click', () => this._openGradePicker());
+
+    this._bindHostInput('login-upd-host');
 
     this._renderAdminCodes();
     this._updateAdminTopBar();
@@ -3522,7 +3726,7 @@ _updLog(msg) {
       let host = this._getSavedHost();
       if (!host && !window.AndroidBackup) host = '127.0.0.1';
       if (!host) {
-        put('未保存电脑 IP：请在更新区填写电脑 IP 后再试');
+        put('未保存电脑 IP：请在管理后台"本机负责年级"下方填写电脑 IP 后再试');
         return;
       }
       url = 'http://' + host + ':8899/apk?v=' + Date.now();
@@ -7175,7 +7379,6 @@ _loadAnswers() {
     var bn = document.querySelector('.bottom-nav');
     if (bn) bn.style.display = 'none';
     var main = document.getElementById('main-content');
-    var savedHost = this._getSavedHost();
     var html = '';
     html += '<div class="login-watermark" id="login-watermark"></div>';
     setTimeout(function() {
@@ -7244,22 +7447,18 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
     html += '</div>';
     html += '<div class="login-divider"><span>系统更新</span></div>';
     html += '<div class="login-form">';
-    html += '<input type="text" class="login-input" id="login-upd-host" placeholder="电脑 IP，如 192.168.1.100" value="' + this._h(savedHost) + '" autocomplete="off">';
     html += '<button class="admin-btn" id="login-upd-btn" style="background:#B08968">🔄 检查更新</button>';
     html += '<button class="login-btn" id="login-apk-btn" style="display:none;background:#1565C0">📦 下载并安装新版 App</button>';
     html += '<div id="upd-log" style="font-size:11px;color:var(--text-light);margin-top:6px;line-height:1.5;word-break:break-all"></div>';
     html += '</div>';
     try { html += '<div style="text-align:center;font-size:11px;color:#B0BEC5;margin-bottom:6px">本机 ' + (window.__BUILTIN_VER || window.__SERVER_VER || '?') + ' ｜ 电脑 <span id="pc-ver-line">--</span></div>'; } catch (e) {}
-    html += '<div style="text-align:center;margin:2px 0 14px"><button class="quit-btn" id="login-exit-btn" style="background:#BDBDBD;border-color:#BDBDBD;color:#444;max-width:160px">✕ 退出</button></div>';
+    html += '<div style="text-align:center;margin:2px 0 14px"><button class="quit-btn" id="login-exit-btn" style="background:transparent;border-color:#BDBDBD;color:#444;max-width:160px">✕ 退出</button></div>';
     html += '</div>';
     main.innerHTML = html;
     this._bindTtsDiag(document.getElementById('login-title-tts'));
     this._loginBind();
-    this._bindHostInput('login-upd-host');
     var updBtn = document.getElementById('login-upd-btn');
     if (updBtn) updBtn.addEventListener('click', function() {
-      var h = document.getElementById('login-upd-host');
-      if (h && h.value.trim()) { try { App._saveHost(h.value.trim()); } catch(e) {} }
       var log = document.getElementById('upd-log');
       if (log) log.innerHTML = '';
       App._checkJsUpdate(0);
@@ -7353,7 +7552,7 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
           if (errEl) errEl.textContent = '未找到该学员：本机与其他平板均无此人，请先注册';
         }
       }).catch(function () {
-        if (errEl) errEl.textContent = '查询其他平板失败：请确认电脑端"错题接收发送器"已启动、与本平板同一 WiFi，且登录页更新区已填写电脑 IP；或先在本机注册';
+        if (errEl) errEl.textContent = '查询其他平板失败：请确认电脑端"错题接收发送器"已启动、与本平板同一 WiFi，且管理后台"本机负责年级"下方已填写电脑 IP；或先在本机注册';
       });
     } catch(e) {
       console.error('_loginBtn error:', e);
@@ -7483,6 +7682,8 @@ var SUPER_PW = 'pj889988';
       }
       if (self.fcAutoTimer) { clearTimeout(self.fcAutoTimer); self.fcAutoTimer = null; }
       if (self._fcRepTimer) { clearTimeout(self._fcRepTimer); self._fcRepTimer = null; }
+      if (self._zhQuizTimer) { clearTimeout(self._zhQuizTimer); self._zhQuizTimer = null; }
+      if (self._zhPyTimer) { clearTimeout(self._zhPyTimer); self._zhPyTimer = null; }
       if (self.readingTimer) { clearTimeout(self.readingTimer); self.readingTimer = null; }
       if (self.dcTimer) { clearTimeout(self.dcTimer); self.dcTimer = null; }
       if (self._dcFallback) { clearTimeout(self._dcFallback); self._dcFallback = null; }
@@ -7985,15 +8186,18 @@ var SUPER_PW = 'pj889988';
   },
 
   // 教学发音：先读汉字 → 再读拼音 → 最后"汉字+拼音"整体（每段之间停顿 450ms）
-  // 注（1655 定案）：拼音音节优先走本地带调声道（sounds/pinyin/N.mp3，Edge TTS 真人神经网络生成，
+  // 注（1655 定案）：拼音音节优先走本地带调声道（sounds/pinyin/N.ogg，Edge TTS 真人神经网络生成，
   //   带调 xǐ 正确；2366 定案曾走有道：带调 500/剥调 200 但丢声调），失败回退剥调有道真人音
   _zhStripTone(s) {
     return String(s || '').replace(/[āáǎà]/g, 'a').replace(/[ēéěè]/g, 'e').replace(/[īíǐì]/g, 'i')
       .replace(/[ōóǒò]/g, 'o').replace(/[ūúǔù]/g, 'u').replace(/[ǖǘǚǜ]/g, 'ü');
   },
 
-  // 英语课文整句本地索引（933句，Edge TTS 生成，见 syntax_test/sentence_test.html）
-  _enIdx: {"A bad day becomes good with a true friend.":1,"A big storm is coming. Stay at home.":2,"A bird can fly in the sky.":3,"A bird can fly. I cannot fly.":4,"A birthday cake for you!":5,"A birthday cake for you! Happy birthday!":6,"A blue whale lives in the sea.":7,"A cat has four legs.":8,"A clever boy helped the king.":9,"A clever fox can solve problems.":10,"A country life is a healthy life!":11,"A dog has four legs.":12,"A fish can swim. I can swim too.":13,"A foolish man lost everything.":14,"A good habit makes you healthy.":15,"A hare crashes into a tree and dies.":16,"A hen lays eggs on the farm.":17,"A little mouse helped the big lion.":18,"A phone call brings us closer.":19,"A policeman is brave. A fireman is brave too.":20,"A polite word makes everyone happy.":21,"A rainbow has many colours.":22,"A short rabbit has long ears.":23,"A small bird is singing in the tree.":24,"A tall giraffe can eat leaves.":25,"A white rabbit is so cute.":26,"A white sheep is on the grass.":27,"A yellow banana is sweet.":28,"After dinner, I do my homework and watch TV.":29,"After school, I play the piano.":30,"After the typhoon, we help clean up.":31,"Air pollution is bad for our health.":32,"An astronaut goes to space by rocket.":33,"An elephant has a very long nose.":34,"An elephant is very heavy.":35,"An orange a day keeps the doctor away.":36,"An orange orange is on the table.":37,"Apple juice, please. Thank you.":38,"Art is fun. I can draw pictures.":39,"Ask questions and try your best.":40,"At night, fireworks light up the sky.":41,"At nine ten, I do my homework.":42,"At seven forty, I have breakfast.":43,"Autumn is cool. Leaves fall down.":44,"Autumn is cool. The leaves are beautiful.":45,"Be careful and we stay safe.":46,"Be careful when you cross the road.":47,"Be confident! I wish you success!":48,"Be quiet in Chinese class.":49,"Bees are busy in the garden.":50,"Being a good listener is important.":51,"Being polite is a good habit.":52,"Ben is excited about his first trip to Beijing.":53,"Ben tries Beijing duck. It is delicious!":54,"Best wishes to you and your family!":55,"Birds can fly, but I cannot fly.":56,"Birds come to my feeder every morning!":57,"Blue shorts are good for summer.":58,"Bread and milk is a good breakfast.":59,"Brush your teeth every morning and night.":60,"But I am not afraid. I love the city life!":61,"But I was a little fat because I surfed the Internet too long.":62,"But the past is past. Today is a new day!":63,"By train, the trip is a real pleasure.":64,"Bye, Mr Chen. Have a nice day!":65,"Bye-bye, Amy!":66,"Camping is a great review of our year!":67,"Can I have a banana? Here you are.":68,"Can you ride a bike? Yes, I can.":69,"Cheer for your team! Let\\":70,"Children get lucky money. So lucky!":71,"China has many festivals besides the Spring Festival.":72,"China is a big country. I love my country.":73,"Chinese is interesting. I love reading.":74,"Chocolate is my favourite snack.":75,"Chunks make my English better.":76,"Clap your hands! One, two, three!":77,"Clean air and water are important.":78,"Clean your ears, please.":79,"Close the door, please. It is cold.":80,"Close the door. Open the window.":81,"Come and play with me!":82,"Come and play! Do you want to join us?":83,"Come here, please. Stand here.":84,"Correct your answers and improve.":85,"Could you pass me the soup, please?":86,"Count them all, please!":87,"Cross the bridge to the small island.":88,"Cross the road at the crossing.":89,"Dad tells jokes and we all laugh.":90,"Day after day, nothing comes. He wastes his time.":91,"Deng Jiaxian is a great scientist of our country.":92,"Different food is good for your body.":93,"Dinner is ready at six. I eat with my family.":94,"Dinner is ready at six. Let\\":95,"Dinner is ready. Help yourself!":96,"Do exercise every day to keep healthy.":97,"Do not be silly and careless like the hare.":98,"Do not buy things made from animals.":99,"Do not play on the road or the railway.":100,"Do not run on the wet floor. Oops!":101,"Do not wait for luck. Work hard for your field!":102,"Do you know how to stay safe?":103,"Do you know the secret to good health?":104,"Do you like meat? Yes, I like fish too.":105,"Do you like watermelon? Yes, I do.":106,"Do you want to try a penalty kick?":107,"Doing chores is my job too.":108,"Don\\":109,"Donald Duck waves to us. So funny!":110,"Dr Sun Yatsen is a famous person in Chinese history.":111,"Drink some water after you run.":112,"Drink water and do exercise every day.":113,"Eat a good breakfast. It is important.":114,"Eat healthy food every day.":115,"Eat more salad and drink some hot soup.":116,"Eat vegetables and fruit at least twice a day.":117,"Enjoy your holiday! Have a good time!":118,"Every child has a hobby. What is yours?":119,"Every country dreams of the stars.":120,"Everyone can be busy as a bee!":121,"Everyone has a good time in Hainan!":122,"Everyone has abilities. What can you do?":123,"Everyone says my cooking is great.":124,"Everything is fine in my home.":125,"Excuse me, can you tell me the way?":126,"Excuse me, where is the hospital?":127,"Exercise makes me strong and happy.":128,"First, I draw a plan on paper.":129,"Follow the rules and we all have fun.":130,"Follow the safety rules and you will be fine.":131,"Follow the school rules every day.":132,"Get up early and go to bed early.":133,"Go straight and turn left at the corner.":134,"Go straight and turn left. The library is there.":135,"Go straight and turn right at the corner.":136,"Good afternoon, teacher!":137,"Good evening, Dad!":138,"Good health is very important.":139,"Good manners make a better world.":140,"Good morning, Mum!":141,"Good night! See you in the morning.":142,"Good night, baby!":143,"Goodbye, Ms White. See you tomorrow.":144,"Goodbye, Tom!":145,"Goodbye, my dear classmates. Thank you.":146,"Goodbye, my dear school. I will miss you.":147,"Grandma calls me on Sunday.":148,"Grapes are small and sweet.":149,"Great! I can\\":150,"Green leaves come out in spring.":151,"Green trees are everywhere in spring.":152,"Guangzhou is a big and modern city.":153,"Hang the stocking on the bed.":154,"Happy Spring Festival! We eat dumplings.":155,"He became a professor in a famous university.":156,"He brought a gift to his friend.":157,"He can jump far and high.":158,"He can jump high. He is good at sport.":159,"He can play the guitar. It sounds great!":160,"He carried a heavy bag up the hill.":161,"He does the high jump. She does the long jump.":162,"He fell down and hurt his leg.":163,"He has a toothache. He should see a doctor.":164,"He is an artist. He draws beautiful pictures.":165,"He is angry because he lost the game.":166,"He is drawing a picture. It is beautiful.":167,"He is my dad. She is my mum. This is me!":168,"He left his province to work on atomic science.":169,"He makes model planes during the holiday.":170,"He misses his hometown, so I play with his pet.":171,"He visits the Great Wall with his father.":172,"He waits for another hare to fall to the ground.":173,"He wanted to free the people from the old days.":174,"He was a great leader of the revolution.":175,"Health is the most important thing.":176,"Healthy food makes me tall and strong.":177,"Hello! I am Tom.":178,"Hello, Grandma! How are you?":179,"Hello, I am Ben. What is your name?":180,"Hello, Ms White!":181,"Help yourself to some fish too.":182,"Here is some rice and vegetables.":183,"Here you are. This is your book.":184,"Hi! I am Amy.":185,"Hi, I am Janet. Nice to meet you.":186,"Hide and seek! Where are you?":187,"His early years shaped his great future.":188,"His hobby is drawing. He draws very well.":189,"His story teaches us to be brave and kind.":190,"Hold the door for others. It is the polite thing to do.":191,"Hot soup and warm beds are the best.":192,"Hot soup is good in winter.":193,"How are you today? I am OK.":194,"How are you? I am fine, thank you.":195,"How do you feel? I feel happy!":196,"How is the weather today?":197,"How is the weather today? It is sunny.":198,"How many apples? One apple.":199,"How many cats are there? There are nine.":200,"How many chairs? Eight chairs.":201,"How many flowers? Nine flowers.":202,"How much is it? It is five yuan.":203,"I always get up early in the morning.":204,"I am a student there. I love my city.":205,"I am a student. I am happy.":206,"I am afraid of the big dog.":207,"I am at the farm. It is big.":208,"I am eleven years old.":209,"I am excited about the trip!":210,"I am good at English. I can speak well.":211,"I am happy at school. I can draw and read.":212,"I am hungry. I want to eat.":213,"I am in the running race. I think I can win!":214,"I am lost. Where is the hospital?":215,"I am proud of our class.":216,"I am running in the playground.":217,"I am thirsty. I want to drink water.":218,"I am wearing a red sweater today.":219,"I ask politely, \"May I use the blackboard?\"":220,"I ate noodles for lunch. They were yummy.":221,"I bought a gift for my mother.":222,"I bought some books in the morning.":223,"I bring a box of chocolates for her.":224,"I brush my teeth and wash my face.":225,"I can cook. I help my mum in the kitchen.":226,"I can count from one to ten.":227,"I can draw a big face.":228,"I can draw and sing. What can you do?":229,"I can find you! This is fun!":230,"I can fly a kite in the park.":231,"I can go shopping in the mall near my home.":232,"I can jump. Jump high!":233,"I can read English and write stories.":234,"I can run. I run fast!":235,"I can see five birds.":236,"I can see the blackboard clearly.":237,"I can sing and dance. It is fun!":238,"I can skate and ski. Winter is fun!":239,"I can swim. I swim every summer.":240,"I can wipe the windows.":241,"I can\\":242,"I choose Sydney because I want to see the opera house.":243,"I clean the blackboard in the morning.":244,"I cleaned my room and washed my clothes.":245,"I collect stamps. I have more than 50 stamps.":246,"I colour my keyboard and it looks great!":247,"I comb my hair and get dressed.":248,"I cut a plastic bottle along the line.":249,"I drank juice and had a good time.":250,"I draw two eyes and one nose.":251,"I drink coffee with my father.":252,"I drink milk and eat eggs every day.":253,"I drink milk every morning.":254,"I eat a hamburger. It is yummy!":255,"I eat an apple every day.":256,"I eat an egg and rice for breakfast.":257,"I eat bread and drink milk for breakfast.":258,"I eat breakfast at seven thirty.":259,"I eat enough fruit too.":260,"I eat fruit like apples and grapes.":261,"I eat mooncakes in autumn. They are sweet.":262,"I eat rice and noodles. They are good.":263,"I fold the trousers and put them away.":264,"I get up at half past six.":265,"I go home at half past four.":266,"I go to school at eight in the morning.":267,"I go to school with my bag.":268,"I go to sleep at nine at night.":269,"I go to sleep at nine. I am tired.":270,"I go to the swimming pool on Saturday.":271,"I had a bad experience and got angry once.":272,"I hang my shirts and jackets neatly.":273,"I have a bike. I ride it to school.":274,"I have a blue hat. It is beautiful.":275,"I have a book, a pen, and a pencil.":276,"I have a cold. I need some medicine.":277,"I have a doll. She is pretty.":278,"I have a dream about my school.":279,"I have a headache and a sore throat.":280,"I have a new friend. Her name is Amy.":281,"I have a new keyboard.":282,"I have a pencil and a rubber.":283,"I have a red balloon.":284,"I have a stomachache. I ate too much.":285,"I have a toy car. It is red.":286,"I have an apple. It is red and sweet.":287,"I have black hair on my head.":288,"I have breakfast at ten past seven.":289,"I have class at ten thirty. Oh no!":290,"I have five fingers on one hand.":291,"I have lunch at school at twelve o\\":292,"I have lunch at school at twelve.":293,"I have one nose and two eyes.":294,"I have so many good memories here.":295,"I have some money. Let\\":296,"I have strong teeth because I brush them.":297,"I have ten fingers on my hands.":298,"I have ten fingers.":299,"I have two big eyes.":300,"I have two ears and one mouth.":301,"I have two eyes and one nose.":302,"I have two legs and ten toes.":303,"I help out in the kitchen every day.":304,"I help them with the farm work.":305,"I hope to see you again. Good luck!":306,"I join the music club at school.":307,"I jump up and down ten times.":308,"I keep a diary of my trip to Hong Kong.":309,"I learn English words in chunks.":310,"I learn a little Cantonese there.":311,"I like badminton. It is fun.":312,"I like bananas. They are yellow and sweet.":313,"I like blue. My bag is blue.":314,"I like chicken and fish. They are good.":315,"I like chicken. It is yummy.":316,"I like chocolate very much.":317,"I like chocolate, but not too much.":318,"I like fruit. Let\\":319,"I like hamburgers, but I don\\":320,"I like noodles. They are yummy.":321,"I like orange juice. It is yummy!":322,"I like peaches. They are soft and sweet.":323,"I like pink flowers.":324,"I like potatoes. They are yummy and healthy.":325,"I like snow. Snow is white and beautiful.":326,"I like sports. Football is my favourite.":327,"I like spring because the flowers bloom.":328,"I like the Spring Festival best of all.":329,"I like the city very much because it is exciting.":330,"I like the ship. The sea is beautiful.":331,"I like this white shirt.":332,"I like to play chess with my father.":333,"I like to read in the library.":334,"I like to travel. Let\\":335,"I like vegetables. I eat them every day.":336,"I like vegetables. Tomatoes are my favourite.":337,"I like winter because I like snow.":338,"I live in the countryside. It is quiet and beautiful.":339,"I look at my old photos back then.":340,"I love camping. It is so much fun!":341,"I love ice cream! It is cold and sweet.":342,"I love music. I can sing and play piano.":343,"I love my family with all my heart.":344,"I love strawberries. They are sweet.":345,"I need to buy a ticket first.":346,"I nod my head to show I understand.":347,"I pack my space bag and fly away!":348,"I plan my day every morning.":349,"I put seeds inside the bottle.":350,"I put the books in order.":351,"I put the noodles into the pot.":352,"I put the rubbish in the bin.":353,"I read books at eight twenty.":354,"I read books every day. I am not tired.":355,"I read the sentence loudly first.":356,"I ride a bike and take walks in the fields.":357,"I ride my bike every day.":358,"I run around the classroom once.":359,"I saw a film. It was wonderful.":360,"I see a cat. It is yellow.":361,"I see a fish in the water.":362,"I see a lion. The lion is the king.":363,"I send a Christmas card to my friend.":364,"I send postcards of the city to my cousin.":365,"I set a password for my iPad.":366,"I stayed at home in the evening. It was a wonderful day!":367,"I sweep the floor after dinner.":368,"I tell her about my new film and book.":369,"I type the numbers and the iPad opens.":370,"I usually walk to school. Sometimes I ride a bike.":371,"I walk to school. It takes ten minutes.":372,"I want a pear. They are yummy.":373,"I want a pizza and a chicken sandwich.":374,"I want one kilo of potatoes and some tomatoes.":375,"I want some candy. It is sweet.":376,"I want some water. I am thirsty.":377,"I want to be a scientist. It is my dream.":378,"I want to be a teacher. I like to help children.":379,"I want to be strong and healthy.":380,"I want to go to the cinema.":381,"I want to grow taller this year.":382,"I want to improve my English.":383,"I want to make a bird feeder.":384,"I want to travel around the world one day.":385,"I want to visit Beijing. It is a famous city.":386,"I was busy yesterday. I had a test.":387,"I was polite to the old people.":388,"I wash the dishes and clear the table.":389,"I wash the tomatoes and cut them.":390,"I watched a film with my friends.":391,"I water the plants by the window.":392,"I wear a red T-shirt today.":393,"I wear a white shirt to school.":394,"I wear shorts in hot summer.":395,"I wear socks every day.":396,"I wear white socks and a blue hat.":397,"I went to the park with my family.":398,"I will go abroad to Sydney, Australia.":399,"I will go to middle school soon.":400,"I will go to the beach with my family.":401,"I will leave primary school. I will miss it.":402,"I will remember this day forever.":403,"I will send a postcard to my friend.":404,"I will try my best. I want to be first.":405,"Ice cream is delicious. I eat it in summer.":406,"In autumn, the leaves turn gold.":407,"In class, we listen to the teacher.":408,"In his early years, he studied physics at university.":409,"In spring, we plant trees and flowers.":410,"In summer, I go to camp and have a picnic.":411,"In the afternoon, I came back and read them.":412,"In the afternoon, I play with my friends.":413,"In the afternoon, the wind gets strong.":414,"In the dream, I go to school at half past ten.":415,"In the evening, I do my homework.":416,"In the evening, we have family time.":417,"In the future, we may travel to other planets.":418,"In the morning, I get up early.":419,"Is it a cat? Yes, it is.":420,"Is it a dog? No, it is a rabbit.":421,"Is that a bear? Yes, it is a brown bear.":422,"Is that a snake? Yes, but it is small.":423,"Is the orange sweet or sour? It is sweet.":424,"Is this your pen? Yes, it is.":425,"It can jump high. Is it a frog?":426,"It is a big city with tall buildings.":427,"It is a new start. Cherish every moment.":428,"It is a quarter past seven. Let\\":429,"It is cheap. I will take it.":430,"It is cloudy. Maybe it will rain.":431,"It is eight o\\":432,"It is hot in summer and cold in winter.":433,"It is natural to feel excited about the meeting.":434,"It is not difficult. But the kangaroo was hard!":435,"It is raining. Put on your raincoat.":436,"It is rainy. I stay at home.":437,"It is rainy. Take your umbrella!":438,"It is seven o\\":439,"It is simple: keep a good diet.":440,"It is sunny and warm in the morning.":441,"It is sunny today. Let\\":442,"It is the middle of winter now.":443,"It is warm in spring. Let\\":444,"It is windy today. Wear your jacket.":445,"It lives in the ocean and looks like a star. A starfish!":446,"It takes one hour to get there by bus.":447,"It usually brings heavy rain.":448,"It will rain. Take an umbrella!":449,"It works as hard as a busy student.":450,"Keep quiet when others speak.":451,"Keep your password a secret.":452,"Keep your room tidy, not messy.":453,"Kick the ball to me!":454,"Kick the ball! Good!":455,"Kids, safety comes first!":456,"Later, I write in my diary: what a happy trip!":457,"Learning science is great fun for everyone.":458,"Let me tell you a story.":459,"Let me tell you a story. It is fun!":460,"Let\\":461,"Letters are everywhere in our life.":462,"Letters help us read and write.":463,"Lily has a birthday party this evening.":464,"Listen carefully in Science class.":465,"Listen to the weather report. It will shine tomorrow.":466,"Long ago, there were no magic words.":467,"Look at the baby. She is cute!":468,"Look at the board. Listen to the teacher.":469,"Look at the farmers in the field.":470,"Look at the lion! It is so big!":471,"Look at the map. Where are we now?":472,"Look at the photo. Who is this man?":473,"Look at the white cloud in the sky.":474,"Look at the yellow duck!":475,"Look at this ruler. It has letters on it.":476,"Look behind the door. The ball is there.":477,"Look! A brown dog!":478,"Look! A pink pig!":479,"Mango is my favourite fruit.":480,"Manners show your heart to everyone.":481,"Many English words come from our life.":482,"Many animals are in danger on the earth.":483,"Many people help us every day.":484,"Maths is my favourite subject.":485,"May I come in? Yes, please.":486,"Meat and chicken help me grow strong.":487,"Merry Christmas! Here is a present for you.":488,"Mountain climbing is hard but exciting.":489,"Mum goes to the shop to buy food.":490,"Mum is cooking dinner in the kitchen.":491,"Mum is in the kitchen. She is cooking.":492,"Mum makes a sweet cake for me.":493,"My aunt is a nurse. She helps sick people.":494,"My bag is near the door.":495,"My bag is on the floor, next to the bed.":496,"My bed is big. I sleep here.":497,"My class is clean. I am proud!":498,"My classmate is my good friend.":499,"My closet is full of clothes.":500,"My cousin is coming back from abroad.":501,"My dad is tall. I am short.":502,"My desk and chair are tidy.":503,"My drawing is ready. It is me!":504,"My ears are small.":505,"My father drinks coffee in the morning.":506,"My father drinks tea after dinner.":507,"My father drives to work every day.":508,"My father is a worker. He tells stories.":509,"My father is tall. He is a teacher.":510,"My father reads in the study.":511,"My father works in a modern office.":512,"My favourite day is Friday!":513,"My grandpa is a farmer. He loves the land.":514,"My grandparents live in the country.":515,"My hobby is reading. I read every day.":516,"My home is comfortable. I like it here.":517,"My mother helps me a lot.":518,"My mother is a nurse. She is gentle.":519,"My mother is beautiful. She is a doctor.":520,"My mum and dad are in the hall.":521,"My name is Tom. I am a boy.":522,"My name is on my bag. That is me.":523,"My password is two, three, four, five.":524,"My pet dog is very cute and clever.":525,"My room is clean. I like my home.":526,"My ruler is long. I like my schoolbag.":527,"My ruler is near the window.":528,"My school is two kilometres away.":529,"My suitcase is heavy. Can you help me?":530,"My sweaters and coats go on the top shelf.":531,"My uncle is a doctor. He is busy but kind.":532,"No, thanks. Football is just not my thing.":533,"None of the people forgot the magic words again.":534,"Now I am ready for school!":535,"Now I know who is who in the family.":536,"Now I know: be good today, not just back then.":537,"Now I touch my toes slowly.":538,"Now my closet is tidy and clean.":539,"Now there is a big store nearby.":540,"On Thursday morning, I have maths.":541,"On Tuesday, we have English class.":542,"On the weekend, I went to the park.":543,"Once upon a time, there was a wise king.":544,"One, two, three! Let\\":545,"Only we can stop the danger.":546,"Open your book and read.":547,"Open your book, please.":548,"Open your mouth, please.":549,"Our class has a big plan today.":550,"Our football team is very good. We can win!":551,"Our friendship will last forever.":552,"Our school garden has many flowers.":553,"Our school has a beautiful garden.":554,"Our school opens a new science lab.":555,"Our team puts up road signs.":556,"Painting is my hobby. I paint every weekend.":557,"Pandas are black and white. They are so cute!":558,"Pandas are cute. They eat bamboo.":559,"Pandas eat bamboo. They live in the forest.":560,"People remember the ancient poet Qu Yuan.":561,"People were upset because no one said \"thank you\".":562,"Please sit down and listen.":563,"Please sit down.":564,"Please take a seat. I am glad you are here.":565,"Put it there, not here.":566,"Put on your clothes. It is cold outside.":567,"Put on your clothes. It is cold.":568,"Put on your coat. It is windy outside.":569,"Put on your jacket and shoes. Let\\":570,"Put on your shoes. Let\\":571,"Put on your warm coat in winter.":572,"Put the pen in the box, please.":573,"Put your book on the desk.":574,"Rabbits eat carrots. I like carrots too.":575,"Raise your arm. Good job!":576,"Red lanterns are everywhere. So beautiful!":577,"Remember the old customs, and celebrate together.":578,"Remember the safety rules before you go.":579,"Rest well and drink more water, please.":580,"Run quickly! The wolf is coming!":581,"Run quickly, but walk slowly on the stairs.":582,"Santa Claus brings gifts to children.":583,"Saturday and Sunday are the weekend. No school!":584,"Save the animals, and save our earth.":585,"Say \"please\" and \"thank you\" often.":586,"Say nice words and give a helping hand.":587,"Science is for everybody, not just the clever.":588,"See you at the party tomorrow!":589,"See you tomorrow. Goodbye!":590,"See? The short cut saves us ten minutes.":591,"Seven days make a week.":592,"Shake your legs. One, two, three!":593,"She asks about my school and my friends.":594,"She can run very fast.":595,"She can speak English very well.":596,"She cheers me up before a test.":597,"She has a fever. She needs to rest.":598,"She has a pretty doll.":599,"She has long hair on her head.":600,"She is kind. I love her so much.":601,"She is writing a letter.":602,"She opens the door for me with warm eyes.":603,"She plays volleyball. She is a good player.":604,"She smiles at me when I am sad.":605,"She wants to be a doctor.":606,"She was surprised by the birthday party.":607,"She wears a pink dress. It is pretty.":608,"She wears a pink dress. She looks pretty.":609,"She wears a red sweater. How pretty!":610,"She will take a natural park tour with us.":611,"Show me your ruler, please.":612,"Show your passport, please.":613,"Sit at your desk, please.":614,"Sit on the chair, please.":615,"Six and seven are my lucky numbers too.":616,"Six pencils and seven rulers are in the box.":617,"Six, seven, eight, nine, ten!":618,"Sleep well, and health will be your friend.":619,"Slow and steady wins the race.":620,"Slow down, look around and stay safe.":621,"Snow is white and a cat is black.":622,"Snow is white. I like white.":623,"Some animals are in danger. We must help them.":624,"Some cows and sheep are eating grass.":625,"Some places are quiet and cheap to live in.":626,"Some streets are dirty, I am afraid.":627,"Someone may get hurt in a hurry.":628,"Spring is warm. Flowers come out.":629,"Spring is warm. Trees turn green.":630,"Stamp your foot! Stamp, stamp, stamp!":631,"Stand in line and wait for your turn.":632,"Stay away from the fire and the knives.":633,"Stop at the traffic light. It is red.":634,"Stop on red and go on green.":635,"Summer is hot, but I can swim.":636,"Summer is hot. I like to eat ice cream.":637,"Summer is hot. I like to swim.":638,"Sure! Can I join you?":639,"Table tennis is popular in China.":640,"Take a rest and drink more water.":641,"Take an umbrella when you go out!":642,"Take an umbrella. It will rain soon.":643,"Take the underground. It is quick and cheap.":644,"Take turns to speak in class.":645,"Tall buildings are everywhere in the city.":646,"Teamwork makes everything easy.":647,"Ten years ago, my village was small.":648,"Thank you for showing me the way!":649,"Thank you for your help.":650,"Thank you very much.":651,"That boy is my friend. That girl is my classmate.":652,"That is a cool cap!":653,"That is a red ball.":654,"That is my mother. She has a big smile.":655,"The Mid-Autumn Festival is coming.":656,"The Spring Festival brings us all together.":657,"The Spring Festival is a traditional festival.":658,"The baby is very cute. She is my sister.":659,"The bag is in the box.":660,"The ball is here, not there!":661,"The banana is yellow.":662,"The bathroom is clean and bright.":663,"The bathroom is small but clean.":664,"The bee is small but very clever.":665,"The big bad wolf wanted to eat the sheep.":666,"The bird can fly. It is in the tree.":667,"The bird sings. It is time to exercise!":668,"The brown dog is big.":669,"The brown horse can run fast.":670,"The bus driver is very nice.":671,"The cake is big and delicious.":672,"The cat is under the chair.":673,"The cat is under the chair. Can you find it?":674,"The chair is near the desk.":675,"The city is different to the village.":676,"The city is modern, but sometimes noisy.":677,"The city is noisy and crowded.":678,"The cold trip is full of warm fun!":679,"The cook makes delicious food.":680,"The country is quiet and beautiful.":681,"The cow is big and white.":682,"The desk is between the bed and the window.":683,"The ears are on both sides.":684,"The elephant is big and heavy.":685,"The farmer picks it up and goes home happily.":686,"The farmer works hard on the farm.":687,"The fox and the mouse watch quietly.":688,"The hare is in such a hurry that it stops for a rest.":689,"The hare runs fast, but the tortoise is steady.":690,"The horse can run very fast.":691,"The horse is fast. The turtle is slow.":692,"The lake is beautiful. We can swim here.":693,"The lion looks scary, but it is beautiful.":694,"The magic word is simple: be thankful.":695,"The monkey has a long tail.":696,"The monkey is funny. It makes me laugh.":697,"The monkey is very funny. It jumps up and down.":698,"The monkey is very funny. It likes bananas.":699,"The museum is near the bank.":700,"The park is quiet and green.":701,"The plants are thin but grow fast.":702,"The post office is on the right.":703,"The red keys are for letters.":704,"The river is long and clean.":705,"The shops were far away from our home.":706,"The sky is blue.":707,"The sky is blue. I like blue.":708,"The sky turns dark and it may rain.":709,"The sofa is in the living room, not here.":710,"The soup smells so good!":711,"The space bar is blue and long.":712,"The sun is bright. It is hot.":713,"The sun is strong at noon.":714,"The supermarket is big and clean.":715,"The temperature is high in summer.":716,"The temperature is often below zero.":717,"The tiger has orange and black stripes.":718,"The tiger has stripes. It is beautiful.":719,"The tortoise carries on slowly but surely.":720,"The toy bus is big and blue.":721,"The traffic is heavy in the city.":722,"The train is fast and comfortable.":723,"The tree is green.":724,"The turtle is very slow.":725,"The weather report says a typhoon is coming.":726,"The weather there is very cold.":727,"The whale is big, but it needs our help too.":728,"The wind blows softly in the garden.":729,"The wind blows. It is very cold.":730,"The wind is cold and the days are short.":731,"The wind is strong today. It is 30 degrees.":732,"The worker builds houses and roads.":733,"The writer writes interesting stories.":734,"The zoo is not far. I love my town!":735,"Then I have breakfast with my family.":736,"Then I try to remember anything new.":737,"Then I wake up and go home quickly.":738,"Then a wise man put up a sign: use kind words.":739,"Then and now, life is getting better and better.":740,"Then go in the right direction for five minutes.":741,"Then we walk along the quiet street.":742,"There are beautiful flowers in the garden.":743,"There are space farms in my dream.":744,"There are three books on the desk.":745,"There is a new fan and a big piano in our room.":746,"There is a picture on the wall.":747,"There is no traffic in this direction.":748,"These are our classroom rules.":749,"They are picking apples from the trees.":750,"They are singing and dancing. So happy!":751,"They still drink fresh milk every morning.":752,"They take many photos at Tian\\":753,"This T-shirt is nice. I like it.":754,"This bag is too expensive.":755,"This festival is my favourite time.":756,"This is a letter A. It is on the wall.":757,"This is a picture of my family. I love them.":758,"This is my bedroom. It is clean and tidy.":759,"This is my bedroom. My bed is big.":760,"This is my body. It is healthy.":761,"This is my classroom. It is big.":762,"This is my dad. He is tall.":763,"This is my face. I wash my face every day.":764,"This is my family. I love my family.":765,"This is my family. There are four people.":766,"This is my father. He is tall.":767,"This is my friend Ben. We play together.":768,"This is my mum. She is beautiful.":769,"This is my new friend. His name is Mike.":770,"This is my pen.":771,"This is my school. It is beautiful.":772,"This is my schoolbag. It is blue.":773,"This is the kitchen. My mother cooks here.":774,"This is the mouth. It is smiling.":775,"Tigers are wild animals. They are in danger.":776,"Today I am on duty.":777,"Today I am the chef in the kitchen.":778,"Today is Monday. I go to school.":779,"Today is Road Helper Day.":780,"Today is my birthday.":781,"Tom is my best friend forever.":782,"Tonight is our music show!":783,"Touch your nose. Good!":784,"Touch your nose. Now touch your eyes.":785,"Touch your toes. Can you do it?":786,"Travel opens our eyes to the world.":787,"Trees grow and make our planet green.":788,"Twelve months make a year.":789,"Wait for your turn and do not push.":790,"Walk along the street. The shop is on the left.":791,"Walk in the forest. It is very quiet.":792,"Was I a good girl back then?":793,"Wash your face in the morning.":794,"Wash your hands before you eat.":795,"Wave your arms. Hello!":796,"We are at the airport. It is very big.":797,"We are going to have an English test next week.":798,"We are going to the museum this Saturday.":799,"We are playing football after school.":800,"We bring the plants inside the house.":801,"We can all do simple experiments.":802,"We can see the fields and rivers on the way.":803,"We can take a plane. It is very fast.":804,"We celebrate the Lantern Festival on the lunar date.":805,"We celebrate this special day together.":806,"We climb the mountain near the sea.":807,"We cook and sing around the fire.":808,"We do our best every day.":809,"We eat jiaozi together and make wishes.":810,"We eat together and laugh happily.":811,"We eat zongzi and race dragon boats.":812,"We give gifts to each other.":813,"We go through the small park.":814,"We go to Beijing by train.":815,"We go to the market to buy food.":816,"We grow fruit and tall flowers there.":817,"We have Art, PE, Science and Maths today.":818,"We have PE today. Let\\":819,"We have a Christmas tree at home.":820,"We have a large garden with flowers.":821,"We have a picnic in the park. It is fun!":822,"We have a sports day next Friday.":823,"We have dinner at six fifty. Yum!":824,"We look at the stars before sleep.":825,"We make a plan to review every day.":826,"We make a poster for our classroom.":827,"We must keep to the right in the hall.":828,"We plan a trip to Harbin in winter.":829,"We plan everything for the happy day.":830,"We play basketball after school.":831,"We play games and dance together.":832,"We play on the beach in summer.":833,"We play on the playground after school.":834,"We remember him as Dr Sun, a hero of our country.":835,"We run and play on the sandy beach.":836,"We run on the playground.":837,"We see snow and ice sculptures everywhere.":838,"We set up the tent near the river.":839,"We share mooncakes at the big meal.":840,"We should protect the Earth. It is our home.":841,"We should protect the environment.":842,"We should save wild animals.":843,"We sing and play the piano together.":844,"We sit on the sofa and eat cookies.":845,"We sit on the sofa and watch TV.":846,"We spend the evening together.":847,"We stay inside and follow the news.":848,"We travel to Hainan in the winter holiday.":849,"We visit Disneyland and meet Mickey Mouse.":850,"We visit our grandparents with gifts.":851,"We watch a film at the cinema.":852,"We watch dragon boat races in June.":853,"We watch films at the cinema on weekends.":854,"We wear thick coats and warm hats.":855,"We went to the swimming pool. It was fun!":856,"We will also visit South Africa to see the nature.":857,"We will be friends forever.":858,"We will go sightseeing and take many photos.":859,"We will go to Guangzhou by train.":860,"We will graduate. It is a new start.":861,"We will leave early in the morning.":862,"We will meet at the school gate at nine.":863,"We will stay in a hotel near the sea.":864,"Wear a helmet when you ride a bike.":865,"Wednesday is a busy day for me.":866,"Welcome to my home! This is my house.":867,"Welcome to my home. Come on in!":868,"Welcome to my house! Come in, please.":869,"What a funny day!":870,"What a wonderful trip for Ben!":871,"What are those farmers doing? They are working hard!":872,"What are you doing? I am reading a book.":873,"What are you wearing? I am wearing a jacket.":874,"What colour is it? It is red.":875,"What colour is the apple? It is red.":876,"What colour is your pen? It is black.":877,"What day is today? Today is Monday.":878,"What did you do last weekend?":879,"What did you do yesterday?":880,"What do you want to be in the future?":881,"What is that? It is a bag.":882,"What is the date? It is Friday.":883,"What is the matter with you?":884,"What is the matter? I have a headache.":885,"What is the weather like today?":886,"What is this? It is a book.":887,"What is your favourite season?":888,"What is your name? I am Lily.":889,"What is your name? My name is Jiamin.":890,"What is your summer holiday plan?":891,"What subject do you like? I like English.":892,"What time is it? Look at the clock!":893,"What time is it? Look at the clock.":894,"What topic do you want to practice?":895,"When I am ill, he comes to see me.":896,"When I am wrong, he tells me kindly.":897,"When something falls out of my memory, I read again.":898,"When the show ends, everyone claps.":899,"Where are you from? I am from Guangzhou.":900,"Where is my book? It is on the desk.":901,"Where is my pen? It is in the bag.":902,"Where is my rubber? It is in my pencil case.":903,"Where is my teacher? She is there.":904,"Where is the best place to live?":905,"Where is the rabbit? It is behind the door.":906,"Where will you go for the holiday?":907,"Which season do you like best? I like spring.":908,"Who is he? He is my brother.":909,"Who is he? He is my new friend.":910,"Who is she? She is Lily. She is a girl.":911,"Who is she? She is my sister.":912,"Who is that girl? She is my sister.":913,"Who is that lady? She is my grandma.":914,"Who is this man? He is my grandpa.":915,"Whose T-shirt is this? It is my T-shirt.":916,"Why do you feel sad? Tell me.":917,"Why? Because practice makes perfect.":918,"Winter is cold outside but warm at home.":919,"Winter is cold, but snow is beautiful.":920,"Winter is cold. Children love to play in the snow.":921,"Winter is cold. I wear a warm coat.":922,"Would you like to go with us?":923,"Yellow keys are for numbers.":924,"Yes! Now it is your turn.":925,"Yes, I would love to. What time?":926,"You and me, we are friends.":927,"You can sort the books. Let\\":928,"You look tired. Did you sleep well?":929,"You must be quiet in the library.":930,"You mustn\\":931,"You should eat more vegetables.":932,"Zero is a number too.":933},
+  // 英语课文整句本地索引（954句，Edge TTS 生成，见 syntax_test/sentence_test.html）
+  _enIdx: {"A bad day becomes good with a true friend.":1,"A big storm is coming. Stay at home.":2,"A bird can fly in the sky.":3,"A bird can fly. I cannot fly.":4,"A birthday cake for you!":5,"A birthday cake for you! Happy birthday!":6,"A blue whale lives in the sea.":7,"A cat has four legs.":8,"A clever boy helped the king.":9,"A clever fox can solve problems.":10,"A country life is a healthy life!":11,"A dog has four legs.":12,"A fish can swim. I can swim too.":13,"A foolish man lost everything.":14,"A good habit makes you healthy.":15,"A hare crashes into a tree and dies.":16,"A hen lays eggs on the farm.":17,"A little mouse helped the big lion.":18,"A phone call brings us closer.":19,"A policeman is brave. A fireman is brave too.":20,"A polite word makes everyone happy.":21,"A rainbow has many colours.":22,"A short rabbit has long ears.":23,"A small bird is singing in the tree.":24,"A tall giraffe can eat leaves.":25,"A white rabbit is so cute.":26,"A white sheep is on the grass.":27,"A yellow banana is sweet.":28,"After dinner, I do my homework and watch TV.":29,"After school, I play the piano.":30,"After the typhoon, we help clean up.":31,"Air pollution is bad for our health.":32,"An astronaut goes to space by rocket.":33,"An elephant has a very long nose.":34,"An elephant is very heavy.":35,"An orange a day keeps the doctor away.":36,"An orange orange is on the table.":37,"Apple juice, please. Thank you.":38,"Art is fun. I can draw pictures.":39,"Ask questions and try your best.":40,"At night, fireworks light up the sky.":41,"At nine ten, I do my homework.":42,"At seven forty, I have breakfast.":43,"Autumn is cool. Leaves fall down.":44,"Autumn is cool. The leaves are beautiful.":45,"Be careful and we stay safe.":46,"Be careful when you cross the road.":47,"Be confident! I wish you success!":48,"Be quiet in Chinese class.":49,"Bees are busy in the garden.":50,"Being a good listener is important.":51,"Being polite is a good habit.":52,"Ben is excited about his first trip to Beijing.":53,"Ben tries Beijing duck. It is delicious!":54,"Best wishes to you and your family!":55,"Birds can fly, but I cannot fly.":56,"Birds come to my feeder every morning!":57,"Blue shorts are good for summer.":58,"Bread and milk is a good breakfast.":59,"Brush your teeth every morning and night.":60,"But I am not afraid. I love the city life!":61,"But I was a little fat because I surfed the Internet too long.":62,"But the past is past. Today is a new day!":63,"By train, the trip is a real pleasure.":64,"Bye, Mr Chen. Have a nice day!":65,"Bye-bye, Amy!":66,"Camping is a great review of our year!":67,"Can I have a banana? Here you are.":68,"Can you ride a bike? Yes, I can.":69,"Children get lucky money. So lucky!":71,"China has many festivals besides the Spring Festival.":72,"China is a big country. I love my country.":73,"Chinese is interesting. I love reading.":74,"Chocolate is my favourite snack.":75,"Chunks make my English better.":76,"Clap your hands! One, two, three!":77,"Clean air and water are important.":78,"Clean your ears, please.":79,"Close the door, please. It is cold.":80,"Close the door. Open the window.":81,"Come and play with me!":82,"Come and play! Do you want to join us?":83,"Come here, please. Stand here.":84,"Correct your answers and improve.":85,"Could you pass me the soup, please?":86,"Count them all, please!":87,"Cross the bridge to the small island.":88,"Cross the road at the crossing.":89,"Dad tells jokes and we all laugh.":90,"Day after day, nothing comes. He wastes his time.":91,"Deng Jiaxian is a great scientist of our country.":92,"Different food is good for your body.":93,"Dinner is ready at six. I eat with my family.":94,"Dinner is ready. Help yourself!":96,"Do exercise every day to keep healthy.":97,"Do not be silly and careless like the hare.":98,"Do not buy things made from animals.":99,"Do not play on the road or the railway.":100,"Do not run on the wet floor. Oops!":101,"Do not wait for luck. Work hard for your field!":102,"Do you know how to stay safe?":103,"Do you know the secret to good health?":104,"Do you like meat? Yes, I like fish too.":105,"Do you like watermelon? Yes, I do.":106,"Do you want to try a penalty kick?":107,"Doing chores is my job too.":108,"Donald Duck waves to us. So funny!":110,"Dr Sun Yatsen is a famous person in Chinese history.":111,"Drink some water after you run.":112,"Drink water and do exercise every day.":113,"Eat a good breakfast. It is important.":114,"Eat healthy food every day.":115,"Eat more salad and drink some hot soup.":116,"Eat vegetables and fruit at least twice a day.":117,"Enjoy your holiday! Have a good time!":118,"Every child has a hobby. What is yours?":119,"Every country dreams of the stars.":120,"Everyone can be busy as a bee!":121,"Everyone has a good time in Hainan!":122,"Everyone has abilities. What can you do?":123,"Everyone says my cooking is great.":124,"Everything is fine in my home.":125,"Excuse me, can you tell me the way?":126,"Excuse me, where is the hospital?":127,"Exercise makes me strong and happy.":128,"First, I draw a plan on paper.":129,"Follow the rules and we all have fun.":130,"Follow the safety rules and you will be fine.":131,"Follow the school rules every day.":132,"Get up early and go to bed early.":133,"Go straight and turn left at the corner.":134,"Go straight and turn left. The library is there.":135,"Go straight and turn right at the corner.":136,"Good afternoon, teacher!":137,"Good evening, Dad!":138,"Good health is very important.":139,"Good manners make a better world.":140,"Good morning, Mum!":141,"Good night! See you in the morning.":142,"Good night, baby!":143,"Goodbye, Ms White. See you tomorrow.":144,"Goodbye, Tom!":145,"Goodbye, my dear classmates. Thank you.":146,"Goodbye, my dear school. I will miss you.":147,"Grandma calls me on Sunday.":148,"Grapes are small and sweet.":149,"Green leaves come out in spring.":151,"Green trees are everywhere in spring.":152,"Guangzhou is a big and modern city.":153,"Hang the stocking on the bed.":154,"Happy Spring Festival! We eat dumplings.":155,"He became a professor in a famous university.":156,"He brought a gift to his friend.":157,"He can jump far and high.":158,"He can jump high. He is good at sport.":159,"He can play the guitar. It sounds great!":160,"He carried a heavy bag up the hill.":161,"He does the high jump. She does the long jump.":162,"He fell down and hurt his leg.":163,"He has a toothache. He should see a doctor.":164,"He is an artist. He draws beautiful pictures.":165,"He is angry because he lost the game.":166,"He is drawing a picture. It is beautiful.":167,"He is my dad. She is my mum. This is me!":168,"He left his province to work on atomic science.":169,"He makes model planes during the holiday.":170,"He misses his hometown, so I play with his pet.":171,"He visits the Great Wall with his father.":172,"He waits for another hare to fall to the ground.":173,"He wanted to free the people from the old days.":174,"He was a great leader of the revolution.":175,"Health is the most important thing.":176,"Healthy food makes me tall and strong.":177,"Hello! I am Tom.":178,"Hello, Grandma! How are you?":179,"Hello, I am Ben. What is your name?":180,"Hello, Ms White!":181,"Help yourself to some fish too.":182,"Here is some rice and vegetables.":183,"Here you are. This is your book.":184,"Hi! I am Amy.":185,"Hi, I am Janet. Nice to meet you.":186,"Hide and seek! Where are you?":187,"His early years shaped his great future.":188,"His hobby is drawing. He draws very well.":189,"His story teaches us to be brave and kind.":190,"Hold the door for others. It is the polite thing to do.":191,"Hot soup and warm beds are the best.":192,"Hot soup is good in winter.":193,"How are you today? I am OK.":194,"How are you? I am fine, thank you.":195,"How do you feel? I feel happy!":196,"How is the weather today?":197,"How is the weather today? It is sunny.":198,"How many apples? One apple.":199,"How many cats are there? There are nine.":200,"How many chairs? Eight chairs.":201,"How many flowers? Nine flowers.":202,"How much is it? It is five yuan.":203,"I always get up early in the morning.":204,"I am a student there. I love my city.":205,"I am a student. I am happy.":206,"I am afraid of the big dog.":207,"I am at the farm. It is big.":208,"I am eleven years old.":209,"I am excited about the trip!":210,"I am good at English. I can speak well.":211,"I am happy at school. I can draw and read.":212,"I am hungry. I want to eat.":213,"I am in the running race. I think I can win!":214,"I am lost. Where is the hospital?":215,"I am proud of our class.":216,"I am running in the playground.":217,"I am thirsty. I want to drink water.":218,"I am wearing a red sweater today.":219,"I ask politely, \"May I use the blackboard?\"":220,"I ate noodles for lunch. They were yummy.":221,"I bought a gift for my mother.":222,"I bought some books in the morning.":223,"I bring a box of chocolates for her.":224,"I brush my teeth and wash my face.":225,"I can cook. I help my mum in the kitchen.":226,"I can count from one to ten.":227,"I can draw a big face.":228,"I can draw and sing. What can you do?":229,"I can find you! This is fun!":230,"I can fly a kite in the park.":231,"I can go shopping in the mall near my home.":232,"I can jump. Jump high!":233,"I can read English and write stories.":234,"I can run. I run fast!":235,"I can see five birds.":236,"I can see the blackboard clearly.":237,"I can sing and dance. It is fun!":238,"I can skate and ski. Winter is fun!":239,"I can swim. I swim every summer.":240,"I can wipe the windows.":241,"I choose Sydney because I want to see the opera house.":243,"I clean the blackboard in the morning.":244,"I cleaned my room and washed my clothes.":245,"I collect stamps. I have more than 50 stamps.":246,"I colour my keyboard and it looks great!":247,"I comb my hair and get dressed.":248,"I cut a plastic bottle along the line.":249,"I drank juice and had a good time.":250,"I draw two eyes and one nose.":251,"I drink coffee with my father.":252,"I drink milk and eat eggs every day.":253,"I drink milk every morning.":254,"I eat a hamburger. It is yummy!":255,"I eat an apple every day.":256,"I eat an egg and rice for breakfast.":257,"I eat bread and drink milk for breakfast.":258,"I eat breakfast at seven thirty.":259,"I eat enough fruit too.":260,"I eat fruit like apples and grapes.":261,"I eat mooncakes in autumn. They are sweet.":262,"I eat rice and noodles. They are good.":263,"I fold the trousers and put them away.":264,"I get up at half past six.":265,"I go home at half past four.":266,"I go to school at eight in the morning.":267,"I go to school with my bag.":268,"I go to sleep at nine at night.":269,"I go to sleep at nine. I am tired.":270,"I go to the swimming pool on Saturday.":271,"I had a bad experience and got angry once.":272,"I hang my shirts and jackets neatly.":273,"I have a bike. I ride it to school.":274,"I have a blue hat. It is beautiful.":275,"I have a book, a pen, and a pencil.":276,"I have a cold. I need some medicine.":277,"I have a doll. She is pretty.":278,"I have a dream about my school.":279,"I have a headache and a sore throat.":280,"I have a new friend. Her name is Amy.":281,"I have a new keyboard.":282,"I have a pencil and a rubber.":283,"I have a red balloon.":284,"I have a stomachache. I ate too much.":285,"I have a toy car. It is red.":286,"I have an apple. It is red and sweet.":287,"I have black hair on my head.":288,"I have breakfast at ten past seven.":289,"I have class at ten thirty. Oh no!":290,"I have five fingers on one hand.":291,"I have lunch at school at twelve.":293,"I have one nose and two eyes.":294,"I have so many good memories here.":295,"I have strong teeth because I brush them.":297,"I have ten fingers on my hands.":298,"I have ten fingers.":299,"I have two big eyes.":300,"I have two ears and one mouth.":301,"I have two eyes and one nose.":302,"I have two legs and ten toes.":303,"I help out in the kitchen every day.":304,"I help them with the farm work.":305,"I hope to see you again. Good luck!":306,"I join the music club at school.":307,"I jump up and down ten times.":308,"I keep a diary of my trip to Hong Kong.":309,"I learn English words in chunks.":310,"I learn a little Cantonese there.":311,"I like badminton. It is fun.":312,"I like bananas. They are yellow and sweet.":313,"I like blue. My bag is blue.":314,"I like chicken and fish. They are good.":315,"I like chicken. It is yummy.":316,"I like chocolate very much.":317,"I like chocolate, but not too much.":318,"I like noodles. They are yummy.":321,"I like orange juice. It is yummy!":322,"I like peaches. They are soft and sweet.":323,"I like pink flowers.":324,"I like potatoes. They are yummy and healthy.":325,"I like snow. Snow is white and beautiful.":326,"I like sports. Football is my favourite.":327,"I like spring because the flowers bloom.":328,"I like the Spring Festival best of all.":329,"I like the city very much because it is exciting.":330,"I like the ship. The sea is beautiful.":331,"I like this white shirt.":332,"I like to play chess with my father.":333,"I like to read in the library.":334,"I like vegetables. I eat them every day.":336,"I like vegetables. Tomatoes are my favourite.":337,"I like winter because I like snow.":338,"I live in the countryside. It is quiet and beautiful.":339,"I look at my old photos back then.":340,"I love camping. It is so much fun!":341,"I love ice cream! It is cold and sweet.":342,"I love music. I can sing and play piano.":343,"I love my family with all my heart.":344,"I love strawberries. They are sweet.":345,"I need to buy a ticket first.":346,"I nod my head to show I understand.":347,"I pack my space bag and fly away!":348,"I plan my day every morning.":349,"I put seeds inside the bottle.":350,"I put the books in order.":351,"I put the noodles into the pot.":352,"I put the rubbish in the bin.":353,"I read books at eight twenty.":354,"I read books every day. I am not tired.":355,"I read the sentence loudly first.":356,"I ride a bike and take walks in the fields.":357,"I ride my bike every day.":358,"I run around the classroom once.":359,"I saw a film. It was wonderful.":360,"I see a cat. It is yellow.":361,"I see a fish in the water.":362,"I see a lion. The lion is the king.":363,"I send a Christmas card to my friend.":364,"I send postcards of the city to my cousin.":365,"I set a password for my iPad.":366,"I stayed at home in the evening. It was a wonderful day!":367,"I sweep the floor after dinner.":368,"I tell her about my new film and book.":369,"I type the numbers and the iPad opens.":370,"I usually walk to school. Sometimes I ride a bike.":371,"I walk to school. It takes ten minutes.":372,"I want a pear. They are yummy.":373,"I want a pizza and a chicken sandwich.":374,"I want one kilo of potatoes and some tomatoes.":375,"I want some candy. It is sweet.":376,"I want some water. I am thirsty.":377,"I want to be a scientist. It is my dream.":378,"I want to be a teacher. I like to help children.":379,"I want to be strong and healthy.":380,"I want to go to the cinema.":381,"I want to grow taller this year.":382,"I want to improve my English.":383,"I want to make a bird feeder.":384,"I want to travel around the world one day.":385,"I want to visit Beijing. It is a famous city.":386,"I was busy yesterday. I had a test.":387,"I was polite to the old people.":388,"I wash the dishes and clear the table.":389,"I wash the tomatoes and cut them.":390,"I watched a film with my friends.":391,"I water the plants by the window.":392,"I wear a red T-shirt today.":393,"I wear a white shirt to school.":394,"I wear shorts in hot summer.":395,"I wear socks every day.":396,"I wear white socks and a blue hat.":397,"I went to the park with my family.":398,"I will go abroad to Sydney, Australia.":399,"I will go to middle school soon.":400,"I will go to the beach with my family.":401,"I will leave primary school. I will miss it.":402,"I will remember this day forever.":403,"I will send a postcard to my friend.":404,"I will try my best. I want to be first.":405,"Ice cream is delicious. I eat it in summer.":406,"In autumn, the leaves turn gold.":407,"In class, we listen to the teacher.":408,"In his early years, he studied physics at university.":409,"In spring, we plant trees and flowers.":410,"In summer, I go to camp and have a picnic.":411,"In the afternoon, I came back and read them.":412,"In the afternoon, I play with my friends.":413,"In the afternoon, the wind gets strong.":414,"In the dream, I go to school at half past ten.":415,"In the evening, I do my homework.":416,"In the evening, we have family time.":417,"In the future, we may travel to other planets.":418,"In the morning, I get up early.":419,"Is it a cat? Yes, it is.":420,"Is it a dog? No, it is a rabbit.":421,"Is that a bear? Yes, it is a brown bear.":422,"Is that a snake? Yes, but it is small.":423,"Is the orange sweet or sour? It is sweet.":424,"Is this your pen? Yes, it is.":425,"It can jump high. Is it a frog?":426,"It is a big city with tall buildings.":427,"It is a new start. Cherish every moment.":428,"It is cheap. I will take it.":430,"It is cloudy. Maybe it will rain.":431,"It is hot in summer and cold in winter.":433,"It is natural to feel excited about the meeting.":434,"It is not difficult. But the kangaroo was hard!":435,"It is raining. Put on your raincoat.":436,"It is rainy. I stay at home.":437,"It is rainy. Take your umbrella!":438,"It is simple: keep a good diet.":440,"It is sunny and warm in the morning.":441,"It is the middle of winter now.":443,"It is windy today. Wear your jacket.":445,"It lives in the ocean and looks like a star. A starfish!":446,"It takes one hour to get there by bus.":447,"It usually brings heavy rain.":448,"It will rain. Take an umbrella!":449,"It works as hard as a busy student.":450,"Keep quiet when others speak.":451,"Keep your password a secret.":452,"Keep your room tidy, not messy.":453,"Kick the ball to me!":454,"Kick the ball! Good!":455,"Kids, safety comes first!":456,"Later, I write in my diary: what a happy trip!":457,"Learning science is great fun for everyone.":458,"Let me tell you a story.":459,"Let me tell you a story. It is fun!":460,"Letters are everywhere in our life.":462,"Letters help us read and write.":463,"Lily has a birthday party this evening.":464,"Listen carefully in Science class.":465,"Listen to the weather report. It will shine tomorrow.":466,"Long ago, there were no magic words.":467,"Look at the baby. She is cute!":468,"Look at the board. Listen to the teacher.":469,"Look at the farmers in the field.":470,"Look at the lion! It is so big!":471,"Look at the map. Where are we now?":472,"Look at the photo. Who is this man?":473,"Look at the white cloud in the sky.":474,"Look at the yellow duck!":475,"Look at this ruler. It has letters on it.":476,"Look behind the door. The ball is there.":477,"Look! A brown dog!":478,"Look! A pink pig!":479,"Mango is my favourite fruit.":480,"Manners show your heart to everyone.":481,"Many English words come from our life.":482,"Many animals are in danger on the earth.":483,"Many people help us every day.":484,"Maths is my favourite subject.":485,"May I come in? Yes, please.":486,"Meat and chicken help me grow strong.":487,"Merry Christmas! Here is a present for you.":488,"Mountain climbing is hard but exciting.":489,"Mum goes to the shop to buy food.":490,"Mum is cooking dinner in the kitchen.":491,"Mum is in the kitchen. She is cooking.":492,"Mum makes a sweet cake for me.":493,"My aunt is a nurse. She helps sick people.":494,"My bag is near the door.":495,"My bag is on the floor, next to the bed.":496,"My bed is big. I sleep here.":497,"My class is clean. I am proud!":498,"My classmate is my good friend.":499,"My closet is full of clothes.":500,"My cousin is coming back from abroad.":501,"My dad is tall. I am short.":502,"My desk and chair are tidy.":503,"My drawing is ready. It is me!":504,"My ears are small.":505,"My father drinks coffee in the morning.":506,"My father drinks tea after dinner.":507,"My father drives to work every day.":508,"My father is a worker. He tells stories.":509,"My father is tall. He is a teacher.":510,"My father reads in the study.":511,"My father works in a modern office.":512,"My favourite day is Friday!":513,"My grandpa is a farmer. He loves the land.":514,"My grandparents live in the country.":515,"My hobby is reading. I read every day.":516,"My home is comfortable. I like it here.":517,"My mother helps me a lot.":518,"My mother is a nurse. She is gentle.":519,"My mother is beautiful. She is a doctor.":520,"My mum and dad are in the hall.":521,"My name is Tom. I am a boy.":522,"My name is on my bag. That is me.":523,"My password is two, three, four, five.":524,"My pet dog is very cute and clever.":525,"My room is clean. I like my home.":526,"My ruler is long. I like my schoolbag.":527,"My ruler is near the window.":528,"My school is two kilometres away.":529,"My suitcase is heavy. Can you help me?":530,"My sweaters and coats go on the top shelf.":531,"My uncle is a doctor. He is busy but kind.":532,"No, thanks. Football is just not my thing.":533,"None of the people forgot the magic words again.":534,"Now I am ready for school!":535,"Now I know who is who in the family.":536,"Now I know: be good today, not just back then.":537,"Now I touch my toes slowly.":538,"Now my closet is tidy and clean.":539,"Now there is a big store nearby.":540,"On Thursday morning, I have maths.":541,"On Tuesday, we have English class.":542,"On the weekend, I went to the park.":543,"Once upon a time, there was a wise king.":544,"Only we can stop the danger.":546,"Open your book and read.":547,"Open your book, please.":548,"Open your mouth, please.":549,"Our class has a big plan today.":550,"Our football team is very good. We can win!":551,"Our friendship will last forever.":552,"Our school garden has many flowers.":553,"Our school has a beautiful garden.":554,"Our school opens a new science lab.":555,"Our team puts up road signs.":556,"Painting is my hobby. I paint every weekend.":557,"Pandas are black and white. They are so cute!":558,"Pandas are cute. They eat bamboo.":559,"Pandas eat bamboo. They live in the forest.":560,"People remember the ancient poet Qu Yuan.":561,"People were upset because no one said \"thank you\".":562,"Please sit down and listen.":563,"Please sit down.":564,"Please take a seat. I am glad you are here.":565,"Put it there, not here.":566,"Put on your clothes. It is cold outside.":567,"Put on your clothes. It is cold.":568,"Put on your coat. It is windy outside.":569,"Put on your warm coat in winter.":572,"Put the pen in the box, please.":573,"Put your book on the desk.":574,"Rabbits eat carrots. I like carrots too.":575,"Raise your arm. Good job!":576,"Red lanterns are everywhere. So beautiful!":577,"Remember the old customs, and celebrate together.":578,"Remember the safety rules before you go.":579,"Rest well and drink more water, please.":580,"Run quickly! The wolf is coming!":581,"Run quickly, but walk slowly on the stairs.":582,"Santa Claus brings gifts to children.":583,"Saturday and Sunday are the weekend. No school!":584,"Save the animals, and save our earth.":585,"Say \"please\" and \"thank you\" often.":586,"Say nice words and give a helping hand.":587,"Science is for everybody, not just the clever.":588,"See you at the party tomorrow!":589,"See you tomorrow. Goodbye!":590,"See? The short cut saves us ten minutes.":591,"Seven days make a week.":592,"Shake your legs. One, two, three!":593,"She asks about my school and my friends.":594,"She can run very fast.":595,"She can speak English very well.":596,"She cheers me up before a test.":597,"She has a fever. She needs to rest.":598,"She has a pretty doll.":599,"She has long hair on her head.":600,"She is kind. I love her so much.":601,"She is writing a letter.":602,"She opens the door for me with warm eyes.":603,"She plays volleyball. She is a good player.":604,"She smiles at me when I am sad.":605,"She wants to be a doctor.":606,"She was surprised by the birthday party.":607,"She wears a pink dress. It is pretty.":608,"She wears a pink dress. She looks pretty.":609,"She wears a red sweater. How pretty!":610,"She will take a natural park tour with us.":611,"Show me your ruler, please.":612,"Show your passport, please.":613,"Sit at your desk, please.":614,"Sit on the chair, please.":615,"Six and seven are my lucky numbers too.":616,"Six pencils and seven rulers are in the box.":617,"Six, seven, eight, nine, ten!":618,"Sleep well, and health will be your friend.":619,"Slow and steady wins the race.":620,"Slow down, look around and stay safe.":621,"Snow is white and a cat is black.":622,"Snow is white. I like white.":623,"Some animals are in danger. We must help them.":624,"Some cows and sheep are eating grass.":625,"Some places are quiet and cheap to live in.":626,"Some streets are dirty, I am afraid.":627,"Someone may get hurt in a hurry.":628,"Spring is warm. Flowers come out.":629,"Spring is warm. Trees turn green.":630,"Stamp your foot! Stamp, stamp, stamp!":631,"Stand in line and wait for your turn.":632,"Stay away from the fire and the knives.":633,"Stop at the traffic light. It is red.":634,"Stop on red and go on green.":635,"Summer is hot, but I can swim.":636,"Summer is hot. I like to eat ice cream.":637,"Summer is hot. I like to swim.":638,"Sure! Can I join you?":639,"Table tennis is popular in China.":640,"Take a rest and drink more water.":641,"Take an umbrella when you go out!":642,"Take an umbrella. It will rain soon.":643,"Take the underground. It is quick and cheap.":644,"Take turns to speak in class.":645,"Tall buildings are everywhere in the city.":646,"Teamwork makes everything easy.":647,"Ten years ago, my village was small.":648,"Thank you for showing me the way!":649,"Thank you for your help.":650,"Thank you very much.":651,"That boy is my friend. That girl is my classmate.":652,"That is a cool cap!":653,"That is a red ball.":654,"That is my mother. She has a big smile.":655,"The Mid-Autumn Festival is coming.":656,"The Spring Festival brings us all together.":657,"The Spring Festival is a traditional festival.":658,"The baby is very cute. She is my sister.":659,"The bag is in the box.":660,"The ball is here, not there!":661,"The banana is yellow.":662,"The bathroom is clean and bright.":663,"The bathroom is small but clean.":664,"The bee is small but very clever.":665,"The big bad wolf wanted to eat the sheep.":666,"The bird can fly. It is in the tree.":667,"The bird sings. It is time to exercise!":668,"The brown dog is big.":669,"The brown horse can run fast.":670,"The bus driver is very nice.":671,"The cake is big and delicious.":672,"The cat is under the chair.":673,"The cat is under the chair. Can you find it?":674,"The chair is near the desk.":675,"The city is different to the village.":676,"The city is modern, but sometimes noisy.":677,"The city is noisy and crowded.":678,"The cold trip is full of warm fun!":679,"The cook makes delicious food.":680,"The country is quiet and beautiful.":681,"The cow is big and white.":682,"The desk is between the bed and the window.":683,"The ears are on both sides.":684,"The elephant is big and heavy.":685,"The farmer picks it up and goes home happily.":686,"The farmer works hard on the farm.":687,"The fox and the mouse watch quietly.":688,"The hare is in such a hurry that it stops for a rest.":689,"The hare runs fast, but the tortoise is steady.":690,"The horse can run very fast.":691,"The horse is fast. The turtle is slow.":692,"The lake is beautiful. We can swim here.":693,"The lion looks scary, but it is beautiful.":694,"The magic word is simple: be thankful.":695,"The monkey has a long tail.":696,"The monkey is funny. It makes me laugh.":697,"The monkey is very funny. It jumps up and down.":698,"The monkey is very funny. It likes bananas.":699,"The museum is near the bank.":700,"The park is quiet and green.":701,"The plants are thin but grow fast.":702,"The post office is on the right.":703,"The red keys are for letters.":704,"The river is long and clean.":705,"The shops were far away from our home.":706,"The sky is blue.":707,"The sky is blue. I like blue.":708,"The sky turns dark and it may rain.":709,"The sofa is in the living room, not here.":710,"The soup smells so good!":711,"The space bar is blue and long.":712,"The sun is bright. It is hot.":713,"The sun is strong at noon.":714,"The supermarket is big and clean.":715,"The temperature is high in summer.":716,"The temperature is often below zero.":717,"The tiger has orange and black stripes.":718,"The tiger has stripes. It is beautiful.":719,"The tortoise carries on slowly but surely.":720,"The toy bus is big and blue.":721,"The traffic is heavy in the city.":722,"The train is fast and comfortable.":723,"The tree is green.":724,"The turtle is very slow.":725,"The weather report says a typhoon is coming.":726,"The weather there is very cold.":727,"The whale is big, but it needs our help too.":728,"The wind blows softly in the garden.":729,"The wind blows. It is very cold.":730,"The wind is cold and the days are short.":731,"The wind is strong today. It is 30 degrees.":732,"The worker builds houses and roads.":733,"The writer writes interesting stories.":734,"The zoo is not far. I love my town!":735,"Then I have breakfast with my family.":736,"Then I try to remember anything new.":737,"Then I wake up and go home quickly.":738,"Then a wise man put up a sign: use kind words.":739,"Then and now, life is getting better and better.":740,"Then go in the right direction for five minutes.":741,"Then we walk along the quiet street.":742,"There are beautiful flowers in the garden.":743,"There are space farms in my dream.":744,"There are three books on the desk.":745,"There is a new fan and a big piano in our room.":746,"There is a picture on the wall.":747,"There is no traffic in this direction.":748,"These are our classroom rules.":749,"They are picking apples from the trees.":750,"They are singing and dancing. So happy!":751,"They still drink fresh milk every morning.":752,"This T-shirt is nice. I like it.":754,"This bag is too expensive.":755,"This festival is my favourite time.":756,"This is a letter A. It is on the wall.":757,"This is a picture of my family. I love them.":758,"This is my bedroom. It is clean and tidy.":759,"This is my bedroom. My bed is big.":760,"This is my body. It is healthy.":761,"This is my classroom. It is big.":762,"This is my dad. He is tall.":763,"This is my face. I wash my face every day.":764,"This is my family. I love my family.":765,"This is my family. There are four people.":766,"This is my father. He is tall.":767,"This is my friend Ben. We play together.":768,"This is my mum. She is beautiful.":769,"This is my new friend. His name is Mike.":770,"This is my pen.":771,"This is my school. It is beautiful.":772,"This is my schoolbag. It is blue.":773,"This is the kitchen. My mother cooks here.":774,"This is the mouth. It is smiling.":775,"Tigers are wild animals. They are in danger.":776,"Today I am on duty.":777,"Today I am the chef in the kitchen.":778,"Today is Monday. I go to school.":779,"Today is Road Helper Day.":780,"Today is my birthday.":781,"Tom is my best friend forever.":782,"Tonight is our music show!":783,"Touch your nose. Good!":784,"Touch your nose. Now touch your eyes.":785,"Touch your toes. Can you do it?":786,"Travel opens our eyes to the world.":787,"Trees grow and make our planet green.":788,"Twelve months make a year.":789,"Wait for your turn and do not push.":790,"Walk along the street. The shop is on the left.":791,"Walk in the forest. It is very quiet.":792,"Was I a good girl back then?":793,"Wash your face in the morning.":794,"Wash your hands before you eat.":795,"Wave your arms. Hello!":796,"We are at the airport. It is very big.":797,"We are going to have an English test next week.":798,"We are going to the museum this Saturday.":799,"We are playing football after school.":800,"We bring the plants inside the house.":801,"We can all do simple experiments.":802,"We can see the fields and rivers on the way.":803,"We can take a plane. It is very fast.":804,"We celebrate the Lantern Festival on the lunar date.":805,"We celebrate this special day together.":806,"We climb the mountain near the sea.":807,"We cook and sing around the fire.":808,"We do our best every day.":809,"We eat jiaozi together and make wishes.":810,"We eat together and laugh happily.":811,"We eat zongzi and race dragon boats.":812,"We give gifts to each other.":813,"We go through the small park.":814,"We go to Beijing by train.":815,"We go to the market to buy food.":816,"We grow fruit and tall flowers there.":817,"We have Art, PE, Science and Maths today.":818,"We have a Christmas tree at home.":820,"We have a large garden with flowers.":821,"We have a picnic in the park. It is fun!":822,"We have a sports day next Friday.":823,"We have dinner at six fifty. Yum!":824,"We look at the stars before sleep.":825,"We make a plan to review every day.":826,"We make a poster for our classroom.":827,"We must keep to the right in the hall.":828,"We plan a trip to Harbin in winter.":829,"We plan everything for the happy day.":830,"We play basketball after school.":831,"We play games and dance together.":832,"We play on the beach in summer.":833,"We play on the playground after school.":834,"We remember him as Dr Sun, a hero of our country.":835,"We run and play on the sandy beach.":836,"We run on the playground.":837,"We see snow and ice sculptures everywhere.":838,"We set up the tent near the river.":839,"We share mooncakes at the big meal.":840,"We should protect the Earth. It is our home.":841,"We should protect the environment.":842,"We should save wild animals.":843,"We sing and play the piano together.":844,"We sit on the sofa and eat cookies.":845,"We sit on the sofa and watch TV.":846,"We spend the evening together.":847,"We stay inside and follow the news.":848,"We travel to Hainan in the winter holiday.":849,"We visit Disneyland and meet Mickey Mouse.":850,"We visit our grandparents with gifts.":851,"We watch a film at the cinema.":852,"We watch dragon boat races in June.":853,"We watch films at the cinema on weekends.":854,"We wear thick coats and warm hats.":855,"We went to the swimming pool. It was fun!":856,"We will also visit South Africa to see the nature.":857,"We will be friends forever.":858,"We will go sightseeing and take many photos.":859,"We will go to Guangzhou by train.":860,"We will graduate. It is a new start.":861,"We will leave early in the morning.":862,"We will meet at the school gate at nine.":863,"We will stay in a hotel near the sea.":864,"Wear a helmet when you ride a bike.":865,"Wednesday is a busy day for me.":866,"Welcome to my home! This is my house.":867,"Welcome to my home. Come on in!":868,"Welcome to my house! Come in, please.":869,"What a funny day!":870,"What a wonderful trip for Ben!":871,"What are those farmers doing? They are working hard!":872,"What are you doing? I am reading a book.":873,"What are you wearing? I am wearing a jacket.":874,"What colour is it? It is red.":875,"What colour is the apple? It is red.":876,"What colour is your pen? It is black.":877,"What day is today? Today is Monday.":878,"What did you do last weekend?":879,"What did you do yesterday?":880,"What do you want to be in the future?":881,"What is that? It is a bag.":882,"What is the date? It is Friday.":883,"What is the matter with you?":884,"What is the matter? I have a headache.":885,"What is the weather like today?":886,"What is this? It is a book.":887,"What is your favourite season?":888,"What is your name? I am Lily.":889,"What is your name? My name is Jiamin.":890,"What is your summer holiday plan?":891,"What subject do you like? I like English.":892,"What time is it? Look at the clock!":893,"What time is it? Look at the clock.":894,"What topic do you want to practice?":895,"When I am ill, he comes to see me.":896,"When I am wrong, he tells me kindly.":897,"When something falls out of my memory, I read again.":898,"When the show ends, everyone claps.":899,"Where are you from? I am from Guangzhou.":900,"Where is my book? It is on the desk.":901,"Where is my pen? It is in the bag.":902,"Where is my rubber? It is in my pencil case.":903,"Where is my teacher? She is there.":904,"Where is the best place to live?":905,"Where is the rabbit? It is behind the door.":906,"Where will you go for the holiday?":907,"Which season do you like best? I like spring.":908,"Who is he? He is my brother.":909,"Who is he? He is my new friend.":910,"Who is she? She is Lily. She is a girl.":911,"Who is she? She is my sister.":912,"Who is that girl? She is my sister.":913,"Who is that lady? She is my grandma.":914,"Who is this man? He is my grandpa.":915,"Whose T-shirt is this? It is my T-shirt.":916,"Why do you feel sad? Tell me.":917,"Why? Because practice makes perfect.":918,"Winter is cold outside but warm at home.":919,"Winter is cold, but snow is beautiful.":920,"Winter is cold. Children love to play in the snow.":921,"Winter is cold. I wear a warm coat.":922,"Would you like to go with us?":923,"Yellow keys are for numbers.":924,"Yes! Now it is your turn.":925,"Yes, I would love to. What time?":926,"You and me, we are friends.":927,"You look tired. Did you sleep well?":929,"You must be quiet in the library.":930,"You should eat more vegetables.":932,"Zero is a number too.":933,"Cheer for your team! Let's go!":934,"Dinner is ready at six. Let's eat!":935,"Don't be afraid of mistakes. Learn from them.":936,"Don't be late for school.":937,"Don't drink too much cola. It is not healthy.":938,"Don't forget to sleep well before the test!":939,"Don't laugh at others. Be kind.":940,"Don't push. Be polite to others.":941,"Don't throw rubbish on the ground.":942,"Great! I can't wait to see the robots.":943,"I can't wait to see you, my dear cousin!":944,"I have lunch at school at twelve o'clock.":945,"I have some money. Let's buy a present.":946,"I like fruit. Let's get some fruit.":947,"I like hamburgers, but I don't eat them every day.":948,"I like to travel. Let's go on a trip!":949,"It is a quarter past seven. Let's go!":950,"It is eight o'clock. Time for school!":951,"It is seven o'clock. I get up.":952,"It is sunny today. Let's go out!":953,"It is warm in spring. Let's go outside!":954,"Let's clean the classroom first!":955,"Let's climb the mountain. The air is fresh!":956,"Let's eat! I am very hungry.":957,"Let's go camping this weekend!":958,"Let's go to the library. I know a short cut!":959,"Let's go to the park on the weekend!":960,"Let's go to the playground and play!":961,"Let's go to the shop. I want to buy a toy.":962,"Let's go to the zoo! I am excited!":963,"Let's go to the zoo! The zoo is big.":964,"Let's play a game together!":965,"Let's play a game! It is a basketball match.":966,"Let's play a guessing game. What animal is it?":967,"Let's review. Practice makes perfect.":968,"Let's sing together! It is really fun!":969,"Let's sing together. La la la!":970,"One, two, three! Let's count!":971,"Put on your jacket and shoes. Let's go!":972,"Put on your shoes. Let's go out!":973,"They take many photos at Tian'anmen Square.":974,"We have PE today. Let's run and jump!":975,"You can sort the books. Let's do it!":976,"You mustn't run in the classroom.":977},
+
+  // 古诗整诗本地索引（111首，key=正文yi原文，值N → sounds/sentences/1xxx.ogg 即 1000+N，见 poems_map）
+  _zhPoemIdx: {"红军不怕远征难，万水千山只等闲。五岭逶迤腾细浪，乌蒙磅礴走泥丸。金沙水拍云崖暖，大渡桥横铁索寒。更喜岷山千里雪，三军过后尽开颜。":0,"梅子黄时日日晴，小溪泛尽却山行。绿阴不减来时路，添得黄鹂四五声。":1,"独在异乡为异客，每逢佳节倍思亲。遥知兄弟登高处，遍插茱萸少一人。":2,"七夕今宵看碧霄，牵牛织女渡河桥。家家乞巧望秋月，穿尽红丝几万条。":3,"绿遍山原白满川，子规声里雨如烟。乡村四月闲人少，才了蚕桑又插田。":4,"茅檐长扫净无苔，花木成畦手自栽。一水护田将绿绕，两山排闼送青来。":5,"青海长云暗雪山，孤城遥望玉门关。黄沙百战穿金甲，不破楼兰终不还。":6,"爆竹声中一岁除，春风送暖入屠苏。千门万户曈曈日，总把新桃换旧符。":7,"黑云翻墨未遮山，白雨跳珠乱入船。卷地风来忽吹散，望湖楼下水如天。":8,"葡萄美酒夜光杯，欲饮琵琶马上催。醉卧沙场君莫笑，古来征战几人回。":9,"黄河远上白云间，一片孤城万仞山。羌笛何须怨杨柳，春风不度玉门关。":10,"秦时明月汉时关，万里长征人未还。但使龙城飞将在，不教胡马度阴山。":11,"千里黄云白日曛，北风吹雁雪纷纷。莫愁前路无知己，天下谁人不识君。":12,"中庭地白树栖鸦，冷露无声湿桂花。今夜月明人尽望，不知秋思落谁家。":13,"风雨送春归，飞雪迎春到。已是悬崖百丈冰，犹有花枝俏。俏也不争春，只把春来报。待到山花烂漫时，她在丛中笑。":14,"水是眼波横，山是眉峰聚。欲问行人去那边？眉眼盈盈处。才始送春归，又送君归去。若到江南赶上春，千万和春住。":15,"小时不识月，呼作白玉盘。又疑瑶台镜，飞在青云端。":16,"碧玉妆成一树高，万条垂下绿丝绦。不知细叶谁裁出，二月春风似剪刀。":17,"鹅，鹅，鹅，曲项向天歌。白毛浮绿水，红掌拨清波。":18,"昼出耘田夜绩麻，村庄儿女各当家。童孙未解供耕织，也傍桑阴学种瓜。":19,"梅子金黄杏子肥，麦花雪白菜花稀。日长篱落无人过，惟有蜻蜓蛱蝶飞。":20,"少小离家老大回，乡音无改鬓毛衰。儿童相见不相识，笑问客从何处来。":21,"月黑雁飞高，单于夜遁逃。欲将轻骑逐，大雪满弓刀。":22,"我家洗砚池头树，朵朵花开淡墨痕。不要人夸好颜色，只留清气满乾坤。":23,"生当作人杰，死亦为鬼雄。至今思项羽，不肯过江东。":24,"萧萧梧叶送寒声，江上秋风动客情。知有儿童挑促织，夜深篱落一灯明。":25,"危楼高百尺，手可摘星辰。不敢高声语，恐惊天上人。":26,"人间四月芳菲尽，山寺桃花始盛开。长恨春归无觅处，不知转入此中来。":27,"云母屏风烛影深，长河渐落晓星沉。嫦娥应悔偷灵药，碧海青天夜夜心。":28,"移舟泊烟渚，日暮客愁新。野旷天低树，江清月近人。":29,"篱落疏疏一径深，树头新绿未成阴。儿童急走追黄蝶，飞入菜花无处寻。":30,"春城无处不飞花，寒食东风御柳斜。日暮汉宫传蜡烛，轻烟散入五侯家。":31,"松下问童子，言师采药去。只在此山中，云深不知处。":32,"蓬头稚子学垂纶，侧坐莓苔草映身。路人借问遥招手，怕得鱼惊不应人。":33,"泉眼无声惜细流，树阴照水爱晴柔。小荷才露尖尖角，早有蜻蜓立上头。":34,"空山新雨后，天气晚来秋。明月松间照，清泉石上流。竹喧归浣女，莲动下渔舟。随意春芳歇，王孙自可留。":35,"远上寒山石径斜，白云生处有人家。停车坐爱枫林晚，霜叶红于二月花。":36,"九州生气恃风雷，万马齐喑究可哀。我劝天公重抖擞，不拘一格降人才。":37,"江南好，风景旧曾谙。日出江花红胜火，春来江水绿如蓝。能不忆江南？":38,"春种一粒粟，秋收万颗子。四海无闲田，农夫犹饿死。":39,"锄禾日当午，汗滴禾下土。谁知盘中餐，粒粒皆辛苦。":40,"竹外桃花三两枝，春江水暖鸭先知。蒌蒿满地芦芽短，正是河豚欲上时。":41,"牧童骑黄牛，歌声振林樾。意欲捕鸣蝉，忽然闭口立。":42,"敕勒川，阴山下。天似穹庐，笼盖四野。天苍苍，野茫茫，风吹草低见牛羊。":43,"朝辞白帝彩云间，千里江陵一日还。两岸猿声啼不住，轻舟已过万重山。":44,"天街小雨润如酥，草色遥看近却无。最是一年春好处，绝胜烟柳满皇都。":45,"好雨知时节，当春乃发生。随风潜入夜，润物细无声。野径云俱黑，江船火独明。晓看红湿处，花重锦官城。":46,"胜日寻芳泗水滨，无边光景一时新。等闲识得东风面，万紫千红总是春。":47,"春眠不觉晓，处处闻啼鸟。夜来风雨声，花落知多少。":48,"毕竟西湖六月中，风光不与四时同。接天莲叶无穷碧，映日荷花别样红。":49,"一道残阳铺水中，半江瑟瑟半江红。可怜九月初三夜，露似真珠月似弓。":50,"天门中断楚江开，碧水东流至此回。两岸青山相对出，孤帆一片日边来。":51,"日照香炉生紫烟，遥看瀑布挂前川。飞流直下三千尺，疑是银河落九天。":52,"湖光秋月两相和，潭面无风镜未磨。遥望洞庭山水翠，白银盘里一青螺。":53,"草长莺飞二月天，拂堤杨柳醉春烟。儿童散学归来早，忙趁东风放纸鸢。":54,"草满池塘水满陂，山衔落日浸寒漪。牧童归去横牛背，短笛无腔信口吹。":55,"月落乌啼霜满天，江枫渔火对愁眠。姑苏城外寒山寺，夜半钟声到客船。":56,"墙角数枝梅，凌寒独自开。遥知不是雪，为有暗香来。":57,"江上往来人，但爱鲈鱼美。君看一叶舟，出没风波里。":58,"江南可采莲，莲叶何田田。鱼戏莲叶间。鱼戏莲叶东，鱼戏莲叶西，鱼戏莲叶南，鱼戏莲叶北。":59,"千里莺啼绿映红，水村山郭酒旗风。南朝四百八十寺，多少楼台烟雨中。":60,"黄四娘家花满蹊，千朵万朵压枝低。留连戏蝶时时舞，自在娇莺恰恰啼。":61,"千山鸟飞绝，万径人踪灭。孤舟蓑笠翁，独钓寒江雪。":62,"小娃撑小艇，偷采白莲回。不解藏踪迹，浮萍一道开。":63,"京口瓜洲一水间，钟山只隔数重山。春风又绿江南岸，明月何时照我还。":64,"游蕲水清泉寺，寺临兰溪，溪水西流。山下兰芽短浸溪，松间沙路净无泥，潇潇暮雨子规啼。谁道人生无再少？门前流水尚能西！休将白发唱黄鸡。":65,"九曲黄河万里沙，浪淘风簸自天涯。如今直上银河去，同到牵牛织女家。":66,"八月涛声吼地来，头高数丈触山回。须臾却入海门去，卷起沙堆似雪堆。":67,"春归何处？寂寞无行路。若有人知春去处，唤取归来同住。春无踪迹谁知？除非问取黄鹂。百啭无人能解，因风飞过蔷薇。":68,"茅檐低小，溪上青青草。醉里吴音相媚好，白发谁家翁媪？大儿锄豆溪东，中儿正织鸡笼。最喜小儿亡赖，溪头卧剥莲蓬。":69,"清明时节雨纷纷，路上行人欲断魂。借问酒家何处有，牧童遥指杏花村。":70,"西塞山前白鹭飞，桃花流水鳜鱼肥。青箬笠，绿蓑衣，斜风细雨不须归。":71,"应怜屐齿印苍苔，小扣柴扉久不开。春色满园关不住，一枝红杏出墙来。":72,"慈母手中线，游子身上衣。临行密密缝，意恐迟迟归。谁言寸草心，报得三春晖。":73,"独怜幽草涧边生，上有黄鹂深树鸣。春潮带雨晚来急，野渡无人舟自横。":74,"众鸟高飞尽，孤云独去闲。相看两不厌，只有敬亭山。":75,"远看山有色，近听水无声。春去花还在，人来鸟不惊。":76,"白日依山尽，黄河入海流。欲穷千里目，更上一层楼。":77,"千锤万凿出深山，烈火焚烧若等闲。粉骨碎身浑不怕，要留清白在人间。":78,"死去元知万事空，但悲不见九州同。王师北定中原日，家祭无忘告乃翁。":79,"三万里河东入海，五千仞岳上摩天。遗民泪尽胡尘里，南望王师又一年。":80,"稚子金盆脱晓冰，彩丝穿取当银钲。敲成玉磬穿林响，忽作玻璃碎地声。":81,"咬定青山不放松，立根原在破岩中。千磨万击还坚劲，任尔东西南北风。":82,"两个黄鹂鸣翠柳，一行白鹭上青天。窗含西岭千秋雪，门泊东吴万里船。":83,"迟日江山丽，春风花草香。泥融飞燕子，沙暖睡鸳鸯。":84,"月黑见渔灯，孤光一点萤。微微风簇浪，散作满河星。":85,"寒雨连江夜入吴，平明送客楚山孤。洛阳亲友如相问，一片冰心在玉壶。":86,"赤橙黄绿青蓝紫，谁持彩练当空舞？雨后复斜阳，关山阵阵苍。当年鏖战急，弹洞前村壁。装点此关山，今朝更好看。":87,"不论平地与山尖，无限风光尽被占。采得百花成蜜后，为谁辛苦为谁甜。":88,"垂緌饮清露，流响出疏桐。居高声自远，非是藉秋风。":89,"明月别枝惊鹊，清风半夜鸣蝉。稻花香里说丰年，听取蛙声一片。七八个星天外，两三点雨山前。旧时茅店社林边，路转溪桥忽见。":90,"离离原上草，一岁一枯荣。野火烧不尽，春风吹又生。":91,"荷尽已无擎雨盖，菊残犹有傲霜枝。一年好景君须记，最是橙黄橘绿时。":92,"李白乘舟将欲行，忽闻岸上踏歌声。桃花潭水深千尺，不及汪伦送我情。":93,"故人具鸡黍，邀我至田家。绿树村边合，青山郭外斜。开轩面场圃，把酒话桑麻。待到重阳日，还来就菊花。":94,"渭城朝雨浥轻尘，客舍青青柳色新。劝君更尽一杯酒，西出阳关无故人。":95,"荷叶罗裙一色裁，芙蓉向脸两边开。乱入池中看不见，闻歌始觉有人来。":96,"昔我往矣，杨柳依依。今我来思，雨雪霏霏。行道迟迟，载渴载饥。我心伤悲，莫知我哀！":97,"青青园中葵，朝露待日晞。阳春布德泽，万物生光辉。常恐秋节至，焜黄华叶衰。百川东到海，何时复西归？少壮不努力，老大徒伤悲！":98,"山一程，水一程，身向榆关那畔行，夜深千帐灯。风一更，雪一更，聒碎乡心梦不成，故园无此声。":99,"剑外忽传收蓟北，初闻涕泪满衣裳。却看妻子愁何在，漫卷诗书喜欲狂。白日放歌须纵酒，青春作伴好还乡。即从巴峡穿巫峡，便下襄阳向洛阳。":100,"梅雪争春未肯降，骚人阁笔费评章。梅须逊雪三分白，雪却输梅一段香。":101,"床前明月光，疑是地上霜。举头望明月，低头思故乡。":102,"山外青山楼外楼，西湖歌舞几时休？暖风熏得游人醉，直把杭州作汴州。":103,"横看成岭侧成峰，远近高低各不同。不识庐山真面目，只缘身在此山中。":104,"解落三秋叶，能开二月花。过江千尺浪，入竹万竿斜。":105,"水光潋滟晴方好，山色空蒙雨亦奇。欲把西湖比西子，淡妆浓抹总相宜。":106,"大漠沙如雪，燕山月似钩。何当金络脑，快走踏清秋。":107,"人闲桂花落，夜静春山空。月出惊山鸟，时鸣春涧中。":108,"空山不见人，但闻人语响。返景入深林，复照青苔上。":109,"故人西辞黄鹤楼，烟花三月下扬州。孤帆远影碧空尽，唯见长江天际流。":110},
 
   _zhPyIdx: {
     'ài': 0,
@@ -8868,13 +9072,13 @@ var SUPER_PW = 'pj889988';
     run(0);
   },
 
-  // 拼音音节本地带调播放：查 _zhPyIdx → APK playPySound / 网页 _playLocalFile('sounds/pinyin/N.mp3')
+  // 拼音音节本地带调播放：查 _zhPyIdx → APK playPySound / 网页 _playLocalFile('sounds/pinyin/N.ogg')
   // 无索引或失败 → onFallback（剥调走有道/合成）
   _zhPlayPySyl(sylStr, onFallback, onEnd) {
     const self = this;
     const idx = this._zhPyIdx && this._zhPyIdx[sylStr];
     if (idx == null) { if (onFallback) { try { onFallback(); } catch (e) {} } return; }
-    const fname = idx + '.mp3';
+    const fname = idx + '.ogg';
     if (window.AndroidBackup && typeof window.AndroidBackup.playPySound === 'function') {
       try {
         const r = String(window.AndroidBackup.playPySound(fname));
@@ -8912,8 +9116,9 @@ var SUPER_PW = 'pj889988';
     run(0);
   },
 
-  _zhSpeakSeq(zi, py, onEnd) {
+  _zhSpeakSeq(zi, py, onEnd, opts) {
     const self = this;
+    const skipUrl = !!(opts && opts.skipUrl);
     const ziT = String(zi || '').trim();
     const pyRaw = String(py || '').trim();
     const pySyllables = pyRaw.split(/[\s·,，、;；]+/).map(s => s.trim()).filter(s => s && /[a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]/i.test(s));
@@ -8933,15 +9138,62 @@ var SUPER_PW = 'pj889988';
       const p = parts[i];
       if (p.isPy) {
         self._zhPlayPySyl(p.text, function() {
-          self._ttsSpeak({ text: self._zhStripTone(p.text), language: 'zh-CN', volume: 1, skipUrl: false, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
+          self._ttsSpeak({ text: self._zhStripTone(p.text), language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
         }, function() {
           setTimeout(function() { run(i + 1); }, gap);
         });
       } else {
-        self._ttsSpeak({ text: p.text, language: 'zh-CN', volume: 1, skipUrl: false, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
+        self._ttsSpeak({ text: p.text, language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
       }
     };
     run(0);
+  },
+
+  // 古诗诵读（F 方案，1660 定案）：查 _zhPoemIdx → 本地整诗音频（诗题+作者+正文，Edge TTS XiaoxiaoNeural -10%，
+  // sounds/sentences/1xxx.ogg 与英语整句同目录复用 playSentenceSound/路由，零 Java 改动）；未命中 → 回退旧链路
+  // （诗题两遍→正文整段走有道/原生/合成——长中文有道 500、坏平板原生+合成皆哑，故仅作兜底）
+  _zhSpeakPoem(zi, py, body, onEnd) {
+    const self = this;
+    const idx = (this._zhPoemIdx && body) ? this._zhPoemIdx[body] : null;
+    if (idx == null) {
+      this._zhSpeakSeq(zi, py, function() {
+        setTimeout(function() {
+          if (body) self._zhSpeak(body, onEnd);
+          else if (onEnd) { try { onEnd(); } catch (e) {} }
+        }, 300);
+      });
+      return;
+    }
+    this._zhPlayPoemFile((1000 + idx) + '.ogg', String(body).length, onEnd);
+  },
+
+  _zhPlayPoemFile(fname, textLen, onDone) {
+    const self = this;
+    const mySeq = this._ttsSeq = (this._ttsSeq || 0) + 1;
+    const alive = function() { return self._ttsSeq === mySeq; };
+    let fired = false;
+    const doneOnce = function() {
+      if (!alive() || fired) return;
+      fired = true;
+      if (self._ttsNativeGuard) { clearTimeout(self._ttsNativeGuard); self._ttsNativeGuard = null; }
+      self._ttsNativeEndCb = null;
+      self._ttsNativeFailCb = null;
+      if (onDone) { try { onDone(); } catch (e) {} }
+    };
+    if (window.AndroidBackup && typeof window.AndroidBackup.playSentenceSound === 'function') {
+      try {
+        const uid = 'pjpm' + mySeq;
+        const r = String(window.AndroidBackup.playSentenceSound(fname, uid));
+        if (r === '1') {
+          this._ttsNativeId = uid;
+          this._ttsNativeGuard = setTimeout(doneOnce, Math.max(4000, Math.min(60000, Math.ceil((textLen || 20) * 700))));
+          this._ttsNativeEndCb = doneOnce;
+          this._ttsNativeFailCb = function() { setTimeout(doneOnce, 0); };
+          return;
+        }
+      } catch (e) {}
+    }
+    this._playLocalFile('sounds/sentences/' + fname, 1, doneOnce, doneOnce);
   },
 
   _zhExitBtn() {
@@ -8954,7 +9206,7 @@ var SUPER_PW = 'pj889988';
 
   renderZhStudy(uid) {
     const info = this._zhInfo(uid);
-    if (!info.words.length) { this.goBack(); return; }
+    if (!info.words.length) { this.exitToUnit(); return; }
     this.stopSpeaking();
     this.zhStudyUid = uid;
     this.zhStudyIdx = 0;
@@ -9059,14 +9311,14 @@ var SUPER_PW = 'pj889988';
     };
     const isPoem = self._zhUnitKind({ words: words }) === 'poem';
     const body = String(w.yi || '');
+    if (isPoem && body) {
+      setTimeout(function() {
+        self._zhSpeakPoem(w.zi, w.pinyin, body, function() { setTimeout(finish, 150); });
+      }, 200);
+      return;
+    }
     this._zhSpeakSeq(w.zi, w.pinyin, function() {
-      if (isPoem && body) {
-        setTimeout(function() {
-          self._zhSpeak(body, function() { setTimeout(finish, 150); });
-        }, 300);
-      } else {
-        setTimeout(finish, 300);
-      }
+      setTimeout(finish, 300);
     });
   },
 
@@ -9079,6 +9331,7 @@ var SUPER_PW = 'pj889988';
     const body = String(w.yi || '');
     const isPoem = this._zhUnitKind({ words: words }) === 'poem';
     const isZi = String(zi).length === 1 && !isPoem;
+    if (isPoem) { this._zhSpeakPoem(zi, py, body); return; }
     if (isZi) {
       if (py) { this._zhSpeakPy(py, function() {}); return; }
       this._zhSpeak(String(zi).trim());
@@ -9087,11 +9340,7 @@ var SUPER_PW = 'pj889988';
     if (!py) { this._zhSpeak(zi); return; }
     this._zhSpeak(zi, function() {
       setTimeout(function() {
-        self._zhSpeakPy(py, function() {
-          setTimeout(function() {
-            if (isPoem && body) self._zhSpeak(body);
-          }, 300);
-        });
+        self._zhSpeakPy(py, function() {});
       }, 300);
     });
   },
@@ -9387,40 +9636,91 @@ var SUPER_PW = 'pj889988';
     const info = this._zhInfo(uid);
     const words = info.words.filter(w => String(w.zi || '').length === 1);
     if (words.length < 2) { this.startLesson(uid); return; }
-    const self = this;
     this.stopSpeaking();
     this.zhQuizMode = 'listen';
     this.zhQuizInfo = info;
     this.zhQuizWords = words.slice();
     this.zhQuizIdx = 0;
     this.zhQuizCorrect = 0;
+    this.zhQuizAnswered = {};
+    if (this._zhQuizTimer) { clearTimeout(this._zhQuizTimer); this._zhQuizTimer = null; }
     this.currentView = 'zhQuiz';
+    this._zhListenRender();
+  },
 
+  // 听音选字渲染（不显示答案字，只听音；支持上一个/下一个）
+  _zhListenRender() {
+    const self = this;
+    const words = this.zhQuizWords;
+    const idx = this.zhQuizIdx;
     const main = document.getElementById('main-content');
-    const q = words[0];
-    const opts = this._zhPickOptions(words, 0, 4);
+    if (idx >= words.length) {
+      const pct = words.length ? Math.round((this.zhQuizCorrect / words.length) * 100) : 0;
+      main.innerHTML = '<div class="reading-container">' + this._zhExitBtn() +
+        '<h2 class="reading-title">🎯 练习完成</h2>' +
+        '<div class="quiz-summary">答对 ' + this.zhQuizCorrect + ' / ' + words.length +
+        '（' + pct + '%）' + (pct >= 80 ? ' 🎉 棒棒哒！' : ' 💪 继续加油！') + '</div></div>';
+      return;
+    }
+    const q = words[idx];
+    const opts = this._zhPickOptions(words, idx, 4);
+    const ans = this.zhQuizAnswered[idx];
     let html = '<div class="reading-container">';
     html += this._zhExitBtn();
     html += '<h2 class="reading-title">🎧 听音选字</h2>';
     html += '<div class="quiz-area">';
-    html += `<div class="zh-q-char" id="zh-q-char">${q.zi}</div>`;
+    html += '<button class="reading-ctrl-btn" id="zh-q-replay">🔊 点击听读音</button>';
     html += '<div class="zh-q-options">';
     opts.forEach((w, i) => {
       html += `<button class="zh-q-opt" data-oi="${i}">${w.zi}</button>`;
     });
     html += '</div>';
-    html += `<div class="zh-q-fb" id="zh-q-fb">点击🔊听读音，选出正确汉字</div>`;
-    html += `<div class="zh-q-score" id="zh-q-score">0 / 0</div>`;
+    let fbText = '点击🔊听读音，选出正确汉字';
+    if (ans) fbText = ans.ok ? ('✅ 回答正确！' + q.zi + ' ' + (q.yi || '')) : ('❌ 答案是「' + q.zi + '」');
+    html += `<div class="zh-q-fb" id="zh-q-fb">${fbText}</div>`;
+    html += `<div class="zh-q-score" id="zh-q-score">${this.zhQuizCorrect} / ${Object.keys(this.zhQuizAnswered).length}</div>`;
+    html += '<div style="display:flex;gap:10px;justify-content:center;margin-top:12px">';
+    html += '<button class="reading-ctrl-btn" id="zh-q-prev"' + (idx <= 0 ? ' disabled' : '') + '>⬅ 上一个</button>';
+    html += '<button class="reading-ctrl-btn" id="zh-q-next">' + (idx >= words.length - 1 ? '完成 ✓' : '下一个 ➡') + '</button>';
+    html += '</div>';
     html += '</div></div>';
     main.innerHTML = html;
 
-    setTimeout(function() { self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
+    if (ans) {
+      document.querySelectorAll('.zh-q-opt').forEach(b => {
+        b.disabled = true;
+        const t = b.textContent.trim();
+        if (t === String(q.zi)) b.classList.add('correct');
+        else if (!ans.ok && t === String(ans.picked)) b.classList.add('wrong');
+      });
+    } else {
+      setTimeout(function() { self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
+    }
 
+    document.getElementById('zh-q-replay').addEventListener('click', function() {
+      self.stopSpeaking();
+      self._zhSpeakSeq(q.zi, q.pinyin);
+    });
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
+        if (self.zhQuizAnswered[idx]) return;
         const oi = parseInt(btn.dataset.oi);
         self._zhQuizAnswer(oi, opts[oi], q);
       });
+    });
+    const prevBtn = document.getElementById('zh-q-prev');
+    if (prevBtn) prevBtn.addEventListener('click', function() {
+      if (idx <= 0) return;
+      if (self._zhQuizTimer) { clearTimeout(self._zhQuizTimer); self._zhQuizTimer = null; }
+      self.stopSpeaking();
+      self.zhQuizIdx = idx - 1;
+      self._zhListenRender();
+    });
+    document.getElementById('zh-q-next').addEventListener('click', function() {
+      if (self._zhQuizTimer) { clearTimeout(self._zhQuizTimer); self._zhQuizTimer = null; }
+      self.stopSpeaking();
+      self.zhQuizIdx = idx + 1;
+      self._zhListenRender();
     });
   },
 
@@ -9444,12 +9744,16 @@ var SUPER_PW = 'pj889988';
     const fb = document.getElementById('zh-q-fb');
     const optBtns = document.querySelectorAll('.zh-q-opt');
     const ok = chosen === correct;
+    if (this.zhQuizMode === 'listen') {
+      if (this.zhQuizAnswered[this.zhQuizIdx]) return;
+      this.zhQuizAnswered[this.zhQuizIdx] = { ok: ok, picked: chosen.zi };
+    }
     optBtns.forEach(b => b.disabled = true);
     if (ok) {
       this.zhQuizCorrect++;
       if (fb) fb.textContent = '✅ 回答正确！' + correct.zi + ' ' + (correct.yi || '');
       optBtns[oi].classList.add('correct');
-      this._zhSpeakSeq(correct.zi, correct.pinyin);
+      this._zhSpeakSeq(correct.zi, correct.pinyin, null, this.zhQuizMode === 'dailyListen' ? { skipUrl: true } : null);
     } else {
       if (fb) fb.textContent = '❌ 答案是「' + correct.zi + '」';
       optBtns[oi].classList.add('wrong');
@@ -9457,54 +9761,25 @@ var SUPER_PW = 'pj889988';
         if (b.textContent.trim() === String(correct.zi)) b.classList.add('correct');
       });
       this._zhAddWrong(correct, this.zhQuizInfo);
-      this._zhSpeakSeq(correct.zi, correct.pinyin);
+      this._zhSpeakSeq(correct.zi, correct.pinyin, null, this.zhQuizMode === 'dailyListen' ? { skipUrl: true } : null);
     }
     this.zhQuizIdx++;
     const scoreEl = document.getElementById('zh-q-score');
-    if (scoreEl) scoreEl.textContent = this.zhQuizCorrect + ' / ' + this.zhQuizIdx;
-    setTimeout(function() { self._zhQuizNext(); }, 1400);
+    if (scoreEl) {
+      scoreEl.textContent = this.zhQuizMode === 'listen'
+        ? (this.zhQuizCorrect + ' / ' + Object.keys(this.zhQuizAnswered).length)
+        : (this.zhQuizCorrect + ' / ' + this.zhQuizIdx);
+    }
+    if (this.zhQuizMode === 'listen') {
+      this._zhQuizTimer = setTimeout(function() { self._zhQuizTimer = null; self._zhQuizNext(); }, 1400);
+    } else {
+      setTimeout(function() { self._zhQuizNext(); }, 1400);
+    }
   },
 
   _zhQuizNext() {
     if (this.zhQuizMode === 'dailyListen') { this._zhDailyListenNext(); return; }
-    const words = this.zhQuizWords;
-    const idx = this.zhQuizIdx;
-    if (idx >= words.length) {
-      const main = document.getElementById('main-content');
-      const pct = words.length ? Math.round((this.zhQuizCorrect / words.length) * 100) : 0;
-      main.innerHTML = '<div class="reading-container">' + this._zhExitBtn() +
-        '<h2 class="reading-title">🎯 练习完成</h2>' +
-        '<div class="quiz-summary">答对 ' + this.zhQuizCorrect + ' / ' + words.length +
-        '（' + pct + '%）' + (pct >= 80 ? ' 🎉 棒棒哒！' : ' 💪 继续加油！') + '</div></div>';
-      return;
-    }
-    const q = words[idx];
-    const opts = this._zhPickOptions(words, idx, 4);
-    const main = document.getElementById('main-content');
-    if (this.zhQuizMode === 'listen') {
-      let html = '<div class="reading-container">';
-      html += this._zhExitBtn();
-      html += '<h2 class="reading-title">🎧 听音选字</h2>';
-      html += '<div class="quiz-area">';
-      html += `<div class="zh-q-char" id="zh-q-char">${q.zi}</div>`;
-      html += '<div class="zh-q-options">';
-      opts.forEach((w, i) => {
-        html += `<button class="zh-q-opt" data-oi="${i}">${w.zi}</button>`;
-      });
-      html += '</div>';
-      html += `<div class="zh-q-fb" id="zh-q-fb">点击🔊听读音</div>`;
-      html += `<div class="zh-q-score" id="zh-q-score">${this.zhQuizCorrect} / ${this.zhQuizIdx}</div>`;
-      html += '</div></div>';
-      main.innerHTML = html;
-      const self = this;
-      setTimeout(function() { self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
-      document.querySelectorAll('.zh-q-opt').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const oi = parseInt(btn.dataset.oi);
-          self._zhQuizAnswer(oi, opts[oi], q);
-        });
-      });
-    }
+    if (this.zhQuizMode === 'listen') { this._zhListenRender(); return; }
   },
 
   zhMeaningIdx: 0,
@@ -10135,7 +10410,7 @@ var SUPER_PW = 'pj889988';
   _finishMatchGame() {
     const main = document.getElementById('main-content');
     const total = this.mgCards.length / 2;
-    const backFn = this.mgDaily ? 'App.renderZhDailyModes()' : 'App.goBack()';
+    const backFn = this.mgDaily ? 'App.renderZhDailyModes()' : 'App.exitToUnit()';
     let html = '<div class="result-container">';
     html += '<div class="result-icon">🎉</div>';
     html += '<h2>全部配对成功!</h2>';
@@ -10143,7 +10418,7 @@ var SUPER_PW = 'pj889988';
     if (this.mgMoves <= total + 3) html += '<p style="color:var(--primary)">🏆 完美！记忆力超强！</p>';
     else if (this.mgMoves <= total * 2) html += '<p style="color:var(--primary)">👍 做得不错！</p>';
     else html += '<p>💪 继续加油！</p>';
-    html += '<button class="continue-btn" onclick="' + backFn + '">' + (this.mgDaily ? '返回语文作业' : '返回') + '</button>';
+    html += '<button class="continue-btn" onclick="' + backFn + '">' + (this.mgDaily ? '返回语文作业' : '返回上一级') + '</button>';
     html += '</div>';
     main.innerHTML = html;
   },
@@ -10270,7 +10545,7 @@ this.currentView = 'dictation';
       html += '<div class="result-answer-item"><span class="result-answer-num">' + (i + 1) + '.</span><span style="font-weight:700;font-size:22px">' + w.zi + '</span></div>';
     });
     html += '</div>';
-    html += '<button class="continue-btn" onclick="App.goBack()">返回</button>';
+    html += '<button class="continue-btn" onclick="App.exitToUnit()">返回上一级</button>';
     html += '</div>';
     main.innerHTML = html;
   },
@@ -11132,7 +11407,13 @@ this.currentView = 'dictation';
       this.renderDailyPractice();
       return;
     }
-    const grade = this.getCourseData().grades.find(g => g.id === this.currentGradeId);
+    const findGrade = (data) => {
+      try { return ((data && data.grades) || []).find(g => g.id === this.currentGradeId) || null; } catch (e) { return null; }
+    };
+    const grade = findGrade(this._getSubjectData(this.currentSubject))
+      || findGrade(this.getCourseData())
+      || findGrade(this._getSubjectData('chinese'))
+      || findGrade(this._getSubjectData('math'));
     if (grade) { this.navStack = ['grade']; this.renderAllUnits(grade); }
     else { this.renderGrades(); }
   },
@@ -13122,4 +13403,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260821-1658';
+window.__SERVER_VER = '20260821-1659';
