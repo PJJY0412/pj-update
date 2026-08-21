@@ -900,10 +900,16 @@ const Storage = {
   },
 
   getWrongWords() {
-    return this.load('wrongWords', []);
+    const list = this.load('wrongWords', []);
+    const clean = list.filter(w => w && typeof w.wordEn === 'string' && w.wordEn && typeof w.wordCn === 'string' && w.wordCn);
+    if (clean.length !== list.length) this.save('wrongWords', clean);
+    return clean;
   },
 
   addWrongWord(wordEn, wordCn, unitId, unitTitle) {
+    wordEn = String(wordEn == null ? '' : wordEn).trim();
+    wordCn = String(wordCn == null ? '' : wordCn).trim();
+    if (!wordEn || !wordCn) return;
     const list = this.getWrongWords();
     const existing = list.find(w => w.wordEn === wordEn);
     if (existing) {
