@@ -8817,7 +8817,7 @@ var SUPER_PW = 'pj889988';
     'zuǒ': 818,
   },
 
-  // 英语课文整句本地播放：查 _enIdx → APK playSentenceSound / 网页 _playLocalFile('sounds/sentences/N.mp3')
+  // 英语课文整句本地播放：查 _enIdx → APK playSentenceSound / 网页 _playLocalFile('sounds/sentences/N.ogg')
   // 无索引或失败 → onFail（由调用方拆词兜底）
   _enPlaySentence(text, onFail, onEnd) {
     const self = this;
@@ -8825,7 +8825,7 @@ var SUPER_PW = 'pj889988';
     const alive = function() { return self._ttsSeq === mySeq; };
     const idx = this._enIdx && this._enIdx[text];
     if (idx == null) { if (onFail) { try { onFail(); } catch (e) {} } return; }
-    const fname = idx + '.mp3';
+    const fname = idx + '.ogg';
     if (window.AndroidBackup && typeof window.AndroidBackup.playSentenceSound === 'function') {
       try {
         const uid = 'pjse' + mySeq;
@@ -13122,4 +13122,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260820-1657';
+window.__SERVER_VER = '20260821-1658';
