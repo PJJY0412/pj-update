@@ -7684,6 +7684,7 @@ var SUPER_PW = 'pj889988';
       if (self._fcRepTimer) { clearTimeout(self._fcRepTimer); self._fcRepTimer = null; }
       if (self._zhQuizTimer) { clearTimeout(self._zhQuizTimer); self._zhQuizTimer = null; }
       if (self._zhPyTimer) { clearTimeout(self._zhPyTimer); self._zhPyTimer = null; }
+      if (self._zhListenAutoTimer) { clearTimeout(self._zhListenAutoTimer); self._zhListenAutoTimer = null; }
       if (self.readingTimer) { clearTimeout(self.readingTimer); self.readingTimer = null; }
       if (self.dcTimer) { clearTimeout(self.dcTimer); self.dcTimer = null; }
       if (self._dcFallback) { clearTimeout(self._dcFallback); self._dcFallback = null; }
@@ -9133,17 +9134,23 @@ var SUPER_PW = 'pj889988';
       return;
     }
     const gap = 450;
+    // 发音链令牌：新链启动/手动停止后，旧链所有未触发的续段一律作废（防多链交错混音）
+    const gen = (this._zhSpeakGen = (this._zhSpeakGen || 0) + 1);
+    const stale = function() { return gen !== self._zhSpeakGen; };
     const run = function(i) {
+      if (stale()) return;
       if (i >= parts.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
       const p = parts[i];
       if (p.isPy) {
         self._zhPlayPySyl(p.text, function() {
-          self._ttsSpeak({ text: self._zhStripTone(p.text), language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
+          if (stale()) return;
+          self._ttsSpeak({ text: self._zhStripTone(p.text), language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gap); } });
         }, function() {
+          if (stale()) return;
           setTimeout(function() { run(i + 1); }, gap);
         });
       } else {
-        self._ttsSpeak({ text: p.text, language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { setTimeout(function() { run(i + 1); }, gap); } });
+        self._ttsSpeak({ text: p.text, language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gap); } });
       }
     };
     run(0);
@@ -9644,6 +9651,7 @@ var SUPER_PW = 'pj889988';
     this.zhQuizCorrect = 0;
     this.zhQuizAnswered = {};
     if (this._zhQuizTimer) { clearTimeout(this._zhQuizTimer); this._zhQuizTimer = null; }
+    if (this._zhListenAutoTimer) { clearTimeout(this._zhListenAutoTimer); this._zhListenAutoTimer = null; }
     this.currentView = 'zhQuiz';
     this._zhListenRender();
   },
@@ -9694,7 +9702,8 @@ var SUPER_PW = 'pj889988';
         else if (!ans.ok && t === String(ans.picked)) b.classList.add('wrong');
       });
     } else {
-      setTimeout(function() { self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
+      if (self._zhListenAutoTimer) { clearTimeout(self._zhListenAutoTimer); }
+      self._zhListenAutoTimer = setTimeout(function() { self._zhListenAutoTimer = null; self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
     }
 
     document.getElementById('zh-q-replay').addEventListener('click', function() {
@@ -9712,12 +9721,14 @@ var SUPER_PW = 'pj889988';
     if (prevBtn) prevBtn.addEventListener('click', function() {
       if (idx <= 0) return;
       if (self._zhQuizTimer) { clearTimeout(self._zhQuizTimer); self._zhQuizTimer = null; }
+      if (self._zhListenAutoTimer) { clearTimeout(self._zhListenAutoTimer); self._zhListenAutoTimer = null; }
       self.stopSpeaking();
       self.zhQuizIdx = idx - 1;
       self._zhListenRender();
     });
     document.getElementById('zh-q-next').addEventListener('click', function() {
       if (self._zhQuizTimer) { clearTimeout(self._zhQuizTimer); self._zhQuizTimer = null; }
+      if (self._zhListenAutoTimer) { clearTimeout(self._zhListenAutoTimer); self._zhListenAutoTimer = null; }
       self.stopSpeaking();
       self.zhQuizIdx = idx + 1;
       self._zhListenRender();
@@ -9746,6 +9757,7 @@ var SUPER_PW = 'pj889988';
     const ok = chosen === correct;
     if (this.zhQuizMode === 'listen') {
       if (this.zhQuizAnswered[this.zhQuizIdx]) return;
+      if (this._zhListenAutoTimer) { clearTimeout(this._zhListenAutoTimer); this._zhListenAutoTimer = null; }
       this.zhQuizAnswered[this.zhQuizIdx] = { ok: ok, picked: chosen.zi };
     }
     optBtns.forEach(b => b.disabled = true);
@@ -10760,6 +10772,7 @@ this.currentView = 'dictation';
   },
 
   stopSpeaking() {
+    this._zhSpeakGen = (this._zhSpeakGen || 0) + 1;
     this._ttsCancel();
     if (this.readingTimer) {
       clearTimeout(this.readingTimer);
@@ -11823,6 +11836,8 @@ _ttsCancel() {
     }
     const lang = opts.language || 'en-US';
     const vol = Math.max(0, Math.min(1, (opts.volume != null) ? opts.volume : 1));
+    // 新发音前清空原生队列：Android TTS 默认排队播放，不清会与上一句叠加混音
+    try { if (window.AndroidBackup && typeof window.AndroidBackup.stopSpeak === 'function') { window.AndroidBackup.stopSpeak(); } } catch(e) {}
     const self = this;
     const mySeq = (this._ttsSeq = (this._ttsSeq || 0) + 1);
     const alive = function() { return self._ttsSeq === mySeq; };
@@ -13403,4 +13418,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260821-1660';
+window.__SERVER_VER = '20260821-1661';
