@@ -11492,8 +11492,10 @@ this.currentView = 'dictation';
   },
 
   renderChoiceExercise(exercise) {
+    const spk = exercise.type === 'chooseCN' ? '<button class="speaker-btn" id="speaker-btn">?? 放一遍</button>' : '';
     return `
       <div class="question-text">${exercise.question}</div>
+      ${spk}
       <div class="options-grid">
         ${exercise.options.map(opt => `<button class="option-btn" data-answer="${opt}">${opt}</button>`).join('')}
       </div>`;
@@ -11512,8 +11514,9 @@ this.currentView = 'dictation';
     return `
       <div class="question-text">${exercise.question}</div>
       <div class="fill-hint">${exercise.hint}</div>
-      <input type="text" class="fill-input" id="fill-input" placeholder="输入单词..." autocomplete="off">
-      <button class="submit-btn" id="submit-btn">确认</button>`;
+      <button class="speaker-btn" id="speaker-btn">?? 再听一遍</button>
+      <input type="text" class="fill-input" id="fill-input" placeholder="请输入单词..." autocomplete="off">
+      <button class="submit-btn" id="submit-btn">确定</button>`;
   },
 
   renderMatchExercise(exercise) {
@@ -11530,6 +11533,16 @@ this.currentView = 'dictation';
 
   attachExerciseListeners(exercise) {
     if (exercise.type === 'chooseCN' || exercise.type === 'chooseEN') {
+      const wq = exercise.word || {};
+      const zhQ = wq.zi !== undefined;
+      var sbq = document.getElementById('speaker-btn');
+      if (sbq) sbq.addEventListener('click', () => {
+        if (zhQ) this.speakChinese(wq.zi); else if (wq.en) this.speakWord(wq.en);
+      });
+      if (exercise.type === 'chooseCN') {
+        if (zhQ) setTimeout(() => this.speakChinese(wq.zi), 350);
+        else if (wq.en) setTimeout(() => this.speakWord(wq.en), 350);
+      }
       document.querySelectorAll('.option-btn').forEach(btn => {
         btn.addEventListener('click', () => this.handleAnswer(btn.dataset.answer, btn));
       });
@@ -11545,6 +11558,11 @@ this.currentView = 'dictation';
     }
 
     if (exercise.type === 'fillBlank') {
+      var wf = exercise.word || {};
+      var sbf = document.getElementById('speaker-btn');
+      if (sbf) sbf.addEventListener('click', () => {
+        if (wf.zi !== undefined) this.speakChinese(exercise.audioWord); else this.speakWord(exercise.audioWord);
+      });
       var sub = document.getElementById('submit-btn');
       if (sub) sub.addEventListener('click', () => { this.handleAnswer(document.getElementById('fill-input').value); });
       var fi = document.getElementById('fill-input');
@@ -11555,7 +11573,9 @@ this.currentView = 'dictation';
         fi.focus();
       }
       if (exercise.audioWord) {
-        setTimeout(() => this.speakChinese(exercise.audioWord), 300);
+        setTimeout(() => {
+          if (wf.zi !== undefined) this.speakChinese(exercise.audioWord); else this.speakWord(exercise.audioWord);
+        }, 300);
       }
     }
 
@@ -11568,6 +11588,8 @@ this.currentView = 'dictation';
           document.querySelectorAll('.match-en').forEach(b => b.classList.remove('selected'));
           btn.classList.add('selected');
           this.selectedEN = btn.dataset.en;
+          const wm = exercise.word || {};
+          if (wm.zi !== undefined) this.speakChinese(btn.dataset.en); else if (wm.en) this.speakWord(btn.dataset.en);
           if (this.selectedCN) this.checkMatch(exercise);
         });
       });
@@ -11654,6 +11676,8 @@ this.currentView = 'dictation';
       if (inp) { inp.classList.add('correct'); inp.disabled = true; }
       if (sub) sub.disabled = true;
       this.showFeedback(true, exercise);
+      const wk = exercise.word || {};
+      if (wk.zi !== undefined) setTimeout(() => this.speakChinese(wk.zi), 250);
       setTimeout(() => this.nextExercise(), 1000);
     } else {
       const word = exercise.word;
@@ -11673,6 +11697,8 @@ this.currentView = 'dictation';
       this.hearts = Storage.loseHeart();
       document.getElementById('heart-count').textContent = this.hearts;
       this.showFeedback(false, exercise);
+      const wl = exercise.word || {};
+      if (wl.zi !== undefined) setTimeout(() => this.speakChinese(wl.zi), 250);
       setTimeout(() => {
         if (this.hearts <= 0) {
           this.showOutOfHearts();
@@ -13455,4 +13481,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260822-1665';
+window.__SERVER_VER = '20260822-1666';
