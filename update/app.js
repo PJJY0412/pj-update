@@ -500,7 +500,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div class="subject-card" data-subj="chinese">';
     html += '<div class="sc-icon">📖</div><div class="sc-name">语文课程</div><div class="sc-desc">' + (this._zhDataTitle() || '部编版同步') + '</div></div>';
     html += '<div class="subject-card" data-subj="math">';
-    html += '<div class="sc-icon">🔢</div><div class="sc-name">数学课程</div><div class="sc-desc">敬请期待 · 筹备中</div></div>';
+    html += '<div class="sc-icon">🔢</div><div class="sc-name">数学课程</div><div class="sc-desc">点击进入学习</div></div>';
     html += '<div class="subject-card" data-subj="english">';
     html += '<div class="sc-icon">📚</div><div class="sc-name">英语课程</div><div class="sc-desc">广州教科版</div></div>';
     html += '</div>';
@@ -538,7 +538,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         if (subj === 'daily') { this.enterDailyPractice(); return; }
         if (subj === 'garden') { this.enterMemoryGarden(); return; }
         if (subj === 'chinese') { this.enterLearning('chinese'); return; }
-        if (subj === 'math') { alert('数学课程正在筹备中，敬请期待！'); return; }
+        if (subj === 'math') { this.enterLearning('math'); return; }
         this.enterLearning();
       });
     });
@@ -1633,6 +1633,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--text-light)">'
       + '<div style="flex:1;height:8px;background:#ECEFF1;border-radius:4px;overflow:hidden"><div style="width:' + Math.round(cleared / total * 100) + '%;height:100%;background:#66BB6A;transition:width .3s"></div></div>'
       + '<span style="white-space:nowrap">' + cleared + ' / ' + total + ' 词</span></div>';
+    const isSingle = String(w.zi || '').trim().length === 1;
     if (!f.flipped) {
       const ziLen = String(w.zi || '').length;
       html += '<div id="zh-fc-card" style="min-height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#FFF;border:2px solid #FFCC80;border-radius:16px;box-shadow:0 4px 14px rgba(0,0,0,.06);cursor:pointer">'
@@ -1640,7 +1641,6 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         + '<div style="margin-top:16px;font-size:14px;color:#90A4AE">想一想：它怎么读？点卡片看答案</div>'
         + '</div>';
     } else {
-      const isSingle = String(w.zi || '').trim().length === 1;
       html += '<div style="background:#FFF;border:2px solid #A5D6A7;border-radius:16px;padding:16px;box-shadow:0 4px 14px rgba(0,0,0,.06)">'
         + '<div style="text-align:center"><span style="font-size:44px;font-weight:700;color:#2E7D32">' + this._h(w.zi) + '</span>'
         + (w.pinyin ? '<span style="font-size:22px;color:#E65100;margin-left:12px">' + this._h(String(w.pinyin)) + '</span>' : '')
@@ -13863,4 +13863,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260822-1667';
+window.__SERVER_VER = '20260822-1668';
