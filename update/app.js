@@ -1149,7 +1149,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         const subj = card.dataset.subj;
         if (subj === 'english') this.renderDailyPractice();
         else if (subj === 'chinese') this.renderZhDailyModes();
-        else this.renderSubjectCards(subj);
+        else this.renderMathDailyModes();
       });
     });
     this.updateTopBar();
@@ -1259,6 +1259,330 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _zhdColor(k) {
     const map = { fc: '#FFF3E0', listen: '#E3F2FD', pinyin: '#E8F5E9', match: '#F3E5F5', say: '#FFEBEE', fly: '#E0F7FA' };
     return map[k] || '#FFF';
+  },
+
+  // ===== 数学每天必练 =====
+  renderMathDailyModes() {
+    const main = document.getElementById('main-content');
+    const words = this._getMathDailyWords();
+    if (!words.length) { this.renderDailyHome(); return; }
+    this.mathDailyWords = words;
+    let html = '<div class="subject-container">';
+    html += '<button class="back-btn" onclick="App.renderDailyHome()">← 返回每天必练</button>';
+    html += '<h2 class="course-title">📐 数学作业</h2>';
+    html += '<div style="padding:0 16px">';
+    html += '<div style="background:#E3F2FD;border:1px solid #90CAF9;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#1565C0">共 <strong>' + words.length + '</strong> 个知识点，选一个玩法开始吧！</div>';
+    html += '<div class="daily-modes">';
+    const modes = [
+      { k: 'memorize', icon: '📋', t: '口诀背诵', d: '翻卡记口诀公式' },
+      { k: 'wrong', icon: '❌', t: '错题重练', d: '重做错过的题' },
+      { k: 'challenge', icon: '🎯', t: '闯关挑战', d: '限时答题冲高分' },
+      { k: 'pattern', icon: '🔢', t: '数字规律', d: '找规律填数字' },
+      { k: 'compare', icon: '🧩', t: '对比辨析', d: '区分相似概念' }
+    ];
+    modes.forEach(m => {
+      html += '<button class="dm-btn math-dm-btn" data-k="' + m.k + '" style="background:#E3F2FD"><span class="dm-icon">' + m.icon + '</span><span class="dm-txt"><strong>' + m.t + '</strong><small>' + m.d + '</small></span></button>';
+    });
+    html += '</div></div></div>';
+    main.innerHTML = html;
+    document.querySelectorAll('.math-dm-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const k = btn.dataset.k;
+        if (k === 'memorize') this.startMathMemorize();
+        else if (k === 'wrong') this.startMathWrongReview();
+        else if (k === 'challenge') this.startMathChallenge();
+        else if (k === 'pattern') this.startMathPattern();
+        else if (k === 'compare') this.startMathCompare();
+      });
+    });
+    this.updateTopBar();
+  },
+
+  _getMathDailyWords() {
+    const sid = this.currentStudent ? this.currentStudent.id : null;
+    const hw = sid ? Storage.getHomeworkMath(sid) : null;
+    let words = hw ? this.getHomeworkWords(hw, 'math') : [];
+    if (!words.length) words = this.mathDailyWords || [];
+    return words;
+  },
+
+  // 📋 口诀背诵
+  startMathMemorize() {
+    const words = this._getMathDailyWords();
+    if (!words.length) { this.renderMathDailyModes(); return; }
+    this._mathMem = { words: words, idx: 0, flipped: false };
+    this._renderMathMem();
+  },
+  _renderMathMem() {
+    const st = this._mathMem;
+    const w = st.words[st.idx];
+    let html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<h2 class="course-title">📋 口诀背诵</h2>';
+    html += '<div style="text-align:center;margin:10px 0;font-size:13px;color:var(--text-light)">' + (st.idx + 1) + ' / ' + st.words.length + '</div>';
+    html += '<div class="math-card" style="text-align:center;cursor:pointer;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center" id="math-mem-card">';
+    if (st.flipped) {
+      html += '<div style="font-size:28px;font-weight:700;color:#0D47A1;margin-bottom:12px">' + this._h(w.en) + '</div>';
+      html += '<div style="font-size:18px;color:#333;line-height:1.8">' + this._h(w.cn) + '</div>';
+    } else {
+      html += '<div style="font-size:32px;font-weight:700;color:#1565C0">' + this._h(w.en) + '</div>';
+      html += '<div style="margin-top:16px;color:#999;font-size:14px">👆 点击查看口诀</div>';
+    }
+    html += '</div>';
+    html += '<div style="display:flex;gap:10px;margin-top:16px">';
+    html += '<button class="admin-gen-btn" id="math-mem-prev" style="flex:1"' + (st.idx === 0 ? ' disabled' : '') + '>◀ 上一个</button>';
+    html += '<button class="login-btn" id="math-mem-flip" style="flex:1">🔄 翻转</button>';
+    html += '<button class="admin-gen-btn" id="math-mem-next" style="flex:1">下一个 ▶</button>';
+    html += '</div>';
+    html += '<div style="margin-top:14px;text-align:center"><button class="quit-btn" onclick="App.renderMathDailyModes()">↩ 完成退出</button></div>';
+    html += '</div>';
+    document.getElementById('main-content').innerHTML = html;
+    document.getElementById('math-mem-card').addEventListener('click', () => { this._mathMem.flipped = !this._mathMem.flipped; this._renderMathMem(); });
+    document.getElementById('math-mem-flip').addEventListener('click', () => { this._mathMem.flipped = !this._mathMem.flipped; this._renderMathMem(); });
+    document.getElementById('math-mem-prev').addEventListener('click', () => { if (this._mathMem.idx > 0) { this._mathMem.idx--; this._mathMem.flipped = false; this._renderMathMem(); } });
+    document.getElementById('math-mem-next').addEventListener('click', () => {
+      if (this._mathMem.idx < this._mathMem.words.length - 1) { this._mathMem.idx++; this._mathMem.flipped = false; this._renderMathMem(); }
+      else { this.renderMathDailyModes(); }
+    });
+  },
+
+  // ❌ 错题重练
+  startMathWrongReview() {
+    const words = this._getMathDailyWords();
+    if (!words.length) { this.renderMathDailyModes(); return; }
+    const wrongEn = (Storage.getWrongWords(this.currentStudent ? this.currentStudent.id : '') || []).map(x => String(x.wordEn || '').trim());
+    const wrongWords = words.filter(w => wrongEn.indexOf(String(w.en || '').trim()) >= 0);
+    if (!wrongWords.length) { alert('没有数学错题，去闯关挑战吧！'); this.renderMathDailyModes(); return; }
+    this._mathQuizWords = wrongWords;
+    this._startMathQuiz('❌ 错题重练');
+  },
+
+  // 🎯 闯关挑战
+  startMathChallenge() {
+    this._mathQuizWords = this._getMathDailyWords();
+    this._startMathQuiz('🎯 闯关挑战');
+  },
+
+  _startMathQuiz(title) {
+    const words = this._mathQuizWords || this._getMathDailyWords();
+    if (!words.length) { this.renderMathDailyModes(); return; }
+    const total = Math.min(words.length, 10);
+    const shuffled = words.slice().sort(function() { return Math.random() - 0.5; }).slice(0, total);
+    this._mathQuiz = { title: title, words: shuffled, idx: 0, score: 0, answered: false };
+    this._renderMathQuiz();
+  },
+
+  _renderMathQuiz() {
+    const q = this._mathQuiz;
+    const w = q.words[q.idx];
+    const total = q.words.length;
+    const opts = this._mathGenOptions(w, q.words);
+    let html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<h2 class="course-title">' + q.title + '</h2>';
+    html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">第 ' + (q.idx + 1) + ' / ' + total + ' 题 · 得分 ' + q.score + '</div>';
+    html += '<div class="math-card" style="text-align:center;padding:24px">';
+    html += '<div style="font-size:22px;font-weight:700;color:#0D47A1;margin-bottom:16px">' + this._h(w.en) + '</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:10px">';
+    opts.forEach(function(o, i) {
+      html += '<button class="math-opt-btn" data-idx="' + i + '">' + o.label + '</button>';
+    });
+    html += '</div>';
+    html += '<div id="math-q-fb" style="margin-top:14px;min-height:30px"></div>';
+    html += '</div>';
+    html += '</div>';
+    document.getElementById('main-content').innerHTML = html;
+    var self = this;
+    document.querySelectorAll('.math-opt-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (q.answered) return;
+        q.answered = true;
+        var idx = parseInt(btn.dataset.idx);
+        var correct = opts[idx].isCorrect;
+        if (correct) q.score++;
+        btn.classList.add(correct ? 'math-opt-correct' : 'math-opt-wrong');
+        if (!correct) {
+          opts.forEach(function(o, oi) { if (o.isCorrect) document.querySelectorAll('.math-opt-btn')[oi].classList.add('math-opt-correct'); });
+        }
+        var fb = document.getElementById('math-q-fb');
+        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (correct ? '#2E7D32' : '#C62828') + '">' + (correct ? '✅ 正确！' : '❌ 正确答案：' + w.cn) + '</div>';
+        setTimeout(function() {
+          q.answered = false;
+          if (q.idx < total - 1) { q.idx++; self._renderMathQuiz(); }
+          else { self._renderMathQuizResult(); }
+        }, 1200);
+      });
+    });
+  },
+
+  _mathGenOptions(correct, allWords) {
+    var correctAns = correct.cn;
+    var pool = [];
+    allWords.forEach(function(w) { if (w.en !== correct.en && w.cn) pool.push(w.cn); });
+    pool = pool.sort(function() { return Math.random() - 0.5; });
+    var opts = [{ label: correctAns, isCorrect: true }];
+    var seen = [correctAns];
+    while (opts.length < 4 && pool.length) {
+      var c = pool.pop();
+      if (seen.indexOf(c) >= 0) continue;
+      seen.push(c);
+      opts.push({ label: c, isCorrect: false });
+    }
+    var fallbacks = ['1+1=2', '3-1=2', '5+0=5', '2×3=6', '8÷2=4'];
+    var fi = 0;
+    while (opts.length < 4) {
+      var fb = fallbacks[fi++];
+      if (seen.indexOf(fb) >= 0) continue;
+      seen.push(fb);
+      opts.push({ label: fb, isCorrect: false });
+    }
+    return opts.sort(function() { return Math.random() - 0.5; });
+  },
+
+  _renderMathQuizResult() {
+    var q = this._mathQuiz;
+    var pct = Math.round(q.score / q.words.length * 100);
+    var stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    var starStr = '⭐'.repeat(stars) + '☆'.repeat(3 - stars);
+    var html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<div class="quiz-summary">';
+    html += '<div style="font-size:40px;margin-bottom:10px">' + starStr + '</div>';
+    html += '<div style="font-size:22px;font-weight:700;color:#1565C0">' + q.score + ' / ' + q.words.length + ' 题正确</div>';
+    html += '<div style="font-size:16px;color:#888;margin-top:6px">正确率 ' + pct + '%</div>';
+    html += '<button class="continue-btn" style="margin-top:20px" onclick="App.renderMathDailyModes()">再来一轮</button>';
+    html += '</div></div>';
+    document.getElementById('main-content').innerHTML = html;
+  },
+
+  // 🔢 数字规律
+  startMathPattern() {
+    var words = this._getMathDailyWords();
+    if (!words.length) { this.renderMathDailyModes(); return; }
+    var patterns = [];
+    for (var i = 0; i < words.length && patterns.length < 8; i++) {
+      var p = this._genMathPattern(words[i]);
+      if (p) patterns.push(p);
+    }
+    if (!patterns.length) { alert('暂无法生成数字规律题'); this.renderMathDailyModes(); return; }
+    this._mathPattern = { patterns: patterns, idx: 0, score: 0, answered: false };
+    this._renderMathPattern();
+  },
+
+  _genMathPattern(w) {
+    var en = String(w.en || '');
+    var nums = en.match(/\d+/g);
+    if (!nums || nums.length < 2) return null;
+    var n = nums.map(Number);
+    if (n.length >= 2 && n[1] - n[0] === n[0]) return null;
+    var sorted = n.slice().sort(function(a, b) { return a - b; });
+    var diff = sorted[1] - sorted[0];
+    var next = sorted[sorted.length - 1] + diff;
+    var label = n.join(', ');
+    return { label: label, answer: next, hint: w.en, cn: w.cn };
+  },
+
+  _renderMathPattern() {
+    var st = this._mathPattern;
+    var p = st.patterns[st.idx];
+    var total = st.patterns.length;
+    var wrongAnswers = [p.answer + 1, p.answer - 2, p.answer + 3];
+    var opts = [{ v: p.answer, ok: true }];
+    wrongAnswers.forEach(function(v) { opts.push({ v: v, ok: false }); });
+    opts.sort(function() { return Math.random() - 0.5; });
+    var html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<h2 class="course-title">🔢 数字规律</h2>';
+    html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">第 ' + (st.idx + 1) + ' / ' + total + ' 题 · 得分 ' + st.score + '</div>';
+    html += '<div class="math-card" style="text-align:center;padding:24px">';
+    html += '<div style="font-size:20px;color:#555;margin-bottom:6px">找规律，下一个数是？</div>';
+    html += '<div style="font-size:28px;font-weight:700;color:#0D47A1;margin-bottom:16px;letter-spacing:4px">' + p.label + ', <span style="color:#E65100">?</span></div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center">';
+    opts.forEach(function(o, i) {
+      html += '<button class="math-opt-btn math-opt-sm" data-idx="' + i + '">' + o.v + '</button>';
+    });
+    html += '</div>';
+    html += '<div id="math-q-fb" style="margin-top:14px;min-height:30px"></div>';
+    html += '</div></div>';
+    document.getElementById('main-content').innerHTML = html;
+    var self = this;
+    document.querySelectorAll('.math-opt-sm').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (st.answered) return;
+        st.answered = true;
+        var idx = parseInt(btn.dataset.idx);
+        var ok = opts[idx].ok;
+        if (ok) st.score++;
+        btn.classList.add(ok ? 'math-opt-correct' : 'math-opt-wrong');
+        if (!ok) {
+          opts.forEach(function(o, oi) { if (o.ok) document.querySelectorAll('.math-opt-sm')[oi].classList.add('math-opt-correct'); });
+        }
+        var fb = document.getElementById('math-q-fb');
+        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (ok ? '#2E7D32' : '#C62828') + '">' + (ok ? '✅ 正确！' : '❌ 答案：' + p.answer) + '</div>';
+        setTimeout(function() {
+          st.answered = false;
+          if (st.idx < total - 1) { st.idx++; self._renderMathPattern(); }
+          else { self._renderMathQuizResult.call(self, { score: st.score, words: st.patterns }); }
+        }, 1200);
+      });
+    });
+  },
+
+  // 🧩 对比辨析
+  startMathCompare() {
+    var words = this._getMathDailyWords();
+    if (words.length < 2) { alert('至少需要2个知识点才能对比'); this.renderMathDailyModes(); return; }
+    var pairs = [];
+    for (var i = 0; i < words.length - 1 && pairs.length < 8; i++) {
+      for (var j = i + 1; j < words.length && pairs.length < 8; j++) {
+        if (words[i].cn && words[j].cn) pairs.push([words[i], words[j]]);
+      }
+    }
+    if (!pairs.length) { alert('暂无法生成对比题'); this.renderMathDailyModes(); return; }
+    pairs = pairs.sort(function() { return Math.random() - 0.5; });
+    this._mathCmp = { pairs: pairs, idx: 0, score: 0, answered: false };
+    this._renderMathCompare();
+  },
+
+  _renderMathCompare() {
+    var st = this._mathCmp;
+    var pair = st.pairs[st.idx];
+    var a = pair[0], b = pair[1];
+    var correctIdx = a.en.length >= b.en.length ? 0 : 1;
+    var html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<h2 class="course-title">🧩 对比辨析</h2>';
+    html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">第 ' + (st.idx + 1) + ' / ' + st.pairs.length + ' 题 · 得分 ' + st.score + '</div>';
+    html += '<div class="math-card" style="text-align:center;padding:24px">';
+    html += '<div style="font-size:18px;color:#555;margin-bottom:14px">下面哪个口诀描述的是"<strong>' + this._h(a.en.length > b.en.length ? a.en : b.en) + '</strong>"？</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:10px">';
+    html += '<button class="math-opt-btn" data-ci="0">' + this._h(a.en) + '：' + this._h(a.cn) + '</button>';
+    html += '<button class="math-opt-btn" data-ci="1">' + this._h(b.en) + '：' + this._h(b.cn) + '</button>';
+    html += '</div>';
+    html += '<div id="math-q-fb" style="margin-top:14px;min-height:30px"></div>';
+    html += '</div></div>';
+    document.getElementById('main-content').innerHTML = html;
+    var self = this;
+    document.querySelectorAll('.math-opt-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (st.answered) return;
+        st.answered = true;
+        var ci = parseInt(btn.dataset.ci);
+        var ok = ci === correctIdx;
+        if (ok) st.score++;
+        btn.classList.add(ok ? 'math-opt-correct' : 'math-opt-wrong');
+        if (!ok) {
+          document.querySelectorAll('.math-opt-btn')[correctIdx].classList.add('math-opt-correct');
+        }
+        var fb = document.getElementById('math-q-fb');
+        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (ok ? '#2E7D32' : '#C62828') + '">' + (ok ? '✅ 正确！' : '❌ 看看正确答案') + '</div>';
+        setTimeout(function() {
+          st.answered = false;
+          if (st.idx < st.pairs.length - 1) { st.idx++; self._renderMathCompare(); }
+          else { self._renderMathQuizResult.call(self, { score: st.score, words: st.pairs }); }
+        }, 1200);
+      });
+    });
   },
 
   // 🃏 认读翻卡（A+E：自评闯关 + 单字笔顺演示）
@@ -8065,6 +8389,12 @@ var SUPER_PW = 'pj889988';
               <button class="unit-flashcard-btn" data-uid="${unit.id}" data-zhact="study">📖 认读</button>
               <button class="unit-hear-choose-btn" data-uid="${unit.id}" data-zhact="listen">🎧 听音选字</button>
               <button class="unit-start-btn" data-uid="${unit.id}">练习</button>`;
+        } else if (this.currentSubject === 'math') {
+          btns = `
+              <button class="unit-math-btn" data-uid="${unit.id}" data-mmode="knowledge">📝 知识点</button>
+              <button class="unit-math-btn" data-uid="${unit.id}" data-mmode="explain">📖 讲解</button>
+              <button class="unit-math-btn" data-uid="${unit.id}" data-mmode="apply">🏠 应用</button>
+              <button class="unit-math-btn" data-uid="${unit.id}" data-mmode="practice">✏️ 练习</button>`;
         } else {
           btns = `
               <button class="unit-flashcard-btn" data-uid="${unit.id}">🃏 闪卡</button>
@@ -8153,6 +8483,19 @@ var SUPER_PW = 'pj889988';
         const uid = parseInt(btn.dataset.uid);
         this.currentUnitId = uid;
         this.startMatchGame(uid);
+      });
+    });
+
+    document.querySelectorAll('.unit-math-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const uid = parseInt(btn.dataset.uid);
+        const mode = btn.dataset.mmode;
+        this.currentUnitId = uid;
+        if (mode === 'knowledge') { this.renderFlashcards(uid); }
+        else if (mode === 'explain') { this.renderMathExplain(uid); }
+        else if (mode === 'apply') { this.renderMathApply(uid); }
+        else if (mode === 'practice') { this.startLesson(uid); }
       });
     });
   },
@@ -11205,6 +11548,45 @@ this.currentView = 'dictation';
     }
   },
 
+  renderMathExplain(unitId) {
+    const words = this.getUnitWords(unitId);
+    if (words.length === 0) { this.renderGrades(); return; }
+    this.currentView = 'math-explain';
+    const ui = this.getUnitInfo(unitId);
+    let html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
+    html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 讲解</div></div>`;
+    words.forEach((w, i) => {
+      html += `<div class="math-card">
+        <div class="math-card-term">${w.en}</div>
+        <div class="math-card-formula">${w.cn}</div>
+        ${w.example ? `<div class="math-card-example">${w.example}</div>` : ''}
+      </div>`;
+    });
+    html += '</div>';
+    document.getElementById('main-content').innerHTML = html;
+    this.updateTopBar();
+  },
+
+  renderMathApply(unitId) {
+    const words = this.getUnitWords(unitId);
+    if (words.length === 0) { this.renderGrades(); return; }
+    this.currentView = 'math-apply';
+    const ui = this.getUnitInfo(unitId);
+    let html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
+    html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 实际应用</div></div>`;
+    words.forEach((w, i) => {
+      html += `<div class="math-card">
+        <div class="math-card-term">${w.en}</div>
+        <div class="math-card-example">${w.example || '暂无应用示例'}</div>
+      </div>`;
+    });
+    html += '</div>';
+    document.getElementById('main-content').innerHTML = html;
+    this.updateTopBar();
+  },
+
   _finishReadingSession(passage) {
     if (this.activeSessionId && this.currentView === 'reading') {
       const total = passage ? passage.sentences.length : 0;
@@ -13481,4 +13863,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260822-1666';
+window.__SERVER_VER = '20260822-1667';
