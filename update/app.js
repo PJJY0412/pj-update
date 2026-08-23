@@ -3989,6 +3989,8 @@ main.innerHTML = html;
             this._lastApkInfo = v.apk;
             this._apkVersion = (String(v.apk.version || '').trim() || v.apk.updated) + ' ' + Math.round((v.apk.size || 0) / 1024) + 'KB';
             this._apkCloudUrl = v.apk.url || '';
+            this._apkUrlList = this._buildApkUrlList(v.apk);
+            this._apkUrlIdx = 0;
             this._showApkBtn();
             this._updLog('云端检测到新版 App（' + this._apkVersion + '），自动下载并安装中...');
             setTimeout(() => { try { this._downloadApk(); } catch (e) {} }, 300);
@@ -4030,6 +4032,36 @@ _updLog(msg) {
     } catch (e) {}
   },
 
+  _buildApkUrlList(apk) {
+    const list = [];
+    const push = (u) => { u = String(u || '').trim(); if (u && list.indexOf(u) < 0) list.push(u); };
+    push(apk && apk.url);
+    if (apk && Array.isArray(apk.mirrors)) apk.mirrors.forEach(push);
+    const first = list[0] || '';
+    const ghPath = first.replace(/^https:\/\/[^/]+\/(https:\/\/github\.com\/)/, '$1');
+    if (/^https:\/\/github\.com\/.+\/releases\/download\//.test(ghPath)) {
+      push('https://gh-proxy.com/' + ghPath);
+      push('https://ghfast.top/' + ghPath);
+      push(ghPath);
+    }
+    return list;
+  },
+
+  _apkFail(reason) {
+    try {
+      if (this._apkWatchTimer) { clearTimeout(this._apkWatchTimer); this._apkWatchTimer = null; }
+      if (!this._apkUrlList || !this._apkUrlList.length || !this._apkCloudUrl) return;
+      this._updLog('⚠️ 下载失败（' + reason + '），切换备用源...');
+      this._apkUrlIdx = (this._apkUrlIdx || 0) + 1;
+      if (this._apkUrlIdx < this._apkUrlList.length) {
+        setTimeout(() => { try { this._downloadApk(); } catch (e) {} }, 2000);
+      } else {
+        this._apkUrlIdx = 0;
+        this._updLog('❌ 所有下载源均失败，请检查网络后点击"检查更新"重试');
+      }
+    } catch (e) {}
+  },
+
   _downloadApk() {
     const self = this;
     const log = document.getElementById('upd-log') || document.getElementById('unlock-upd-log');
@@ -4042,8 +4074,12 @@ _updLog(msg) {
     };
     let url = '';
     let saveName = 'pj-english-update.apk';
+    let srcTotal = 1;
     if (this._apkCloudUrl) {
-      url = this._apkCloudUrl;
+      const list = (Array.isArray(this._apkUrlList) && this._apkUrlList.length) ? this._apkUrlList : [this._apkCloudUrl];
+      srcTotal = list.length;
+      if (typeof this._apkUrlIdx !== 'number' || this._apkUrlIdx < 0 || this._apkUrlIdx >= list.length) this._apkUrlIdx = 0;
+      url = list[this._apkUrlIdx];
       const verPart = String((this._lastApkInfo && this._lastApkInfo.version) || '').replace(/[^\w.-]/g, '');
       if (verPart) saveName = 'pj-english-' + verPart + '.apk';
     } else {
@@ -4057,13 +4093,18 @@ _updLog(msg) {
       saveName = '培基智多星学习系统.apk';
     }
     if (window.AndroidBackup && window.AndroidBackup.downloadAndInstallApk) {
-      put('开始从 ' + (url ? url : '云端') + ' 下载新版安装包...');
+      put('开始下载（源 ' + (this._apkUrlIdx + 1) + '/' + srcTotal + '）：' + url);
       const expHash = (this._apkCloudUrl && this._lastApkInfo && this._lastApkInfo.hash) ? String(this._lastApkInfo.hash) : '';
+      if (this._apkWatchTimer) clearTimeout(this._apkWatchTimer);
+      const sz = (this._lastApkInfo && this._lastApkInfo.size) || 55000000;
+      const secs = Math.max(90, Math.ceil(sz / 150000));
+      this._apkWatchTimer = setTimeout(() => { try { self._apkFail('timeout'); } catch (e) {} }, secs * 1000);
       try {
         window.AndroidBackup.downloadAndInstallApk(url, saveName, expHash);
       } catch (e) {
         try { window.AndroidBackup.downloadAndInstallApk(url, saveName); } catch (e2) {
           put('下载启动失败：' + (e && e.message || e));
+          try { this._apkFail('start'); } catch (e3) {}
         }
       }
     } else {
@@ -4073,6 +4114,7 @@ _updLog(msg) {
 
   _apkDownloaded(path) {
     try {
+      if (this._apkWatchTimer) { clearTimeout(this._apkWatchTimer); this._apkWatchTimer = null; }
       if (this._lastApkInfo) {
         try { Storage.setApkInfo(this._lastApkInfo); } catch (e) {}
       }
@@ -13863,4 +13905,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260822-1669';
+window.__SERVER_VER = '20260823-1670';
