@@ -13912,4 +13912,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1672';
+window.__SERVER_VER = '20260823-1673';
