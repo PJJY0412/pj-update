@@ -9524,6 +9524,11 @@ var SUPER_PW = 'pj889988';
       return;
     }
     const gap = 450;
+    // 连续拼音音节间用短间隔（150ms）连成一组，保证 playTimes=3 时听感严格为「字|拼音组|字」3 拍
+    const gapAfter = function(i) {
+      const c = parts[i], n = parts[i + 1];
+      return (c && n && c.isPy && n.isPy) ? 150 : gap;
+    };
     // 发音链令牌：新链启动/手动停止后，旧链所有未触发的续段一律作废（防多链交错混音）
     const gen = (this._zhSpeakGen = (this._zhSpeakGen || 0) + 1);
     const stale = function() { return gen !== self._zhSpeakGen; };
@@ -9534,13 +9539,13 @@ var SUPER_PW = 'pj889988';
       if (p.isPy) {
         self._zhPlayPySyl(p.text, function() {
           if (stale()) return;
-          self._ttsSpeak({ text: self._zhStripTone(p.text), language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gap); } });
+          self._ttsSpeak({ text: self._zhStripTone(p.text), language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gapAfter(i)); } });
         }, function() {
           if (stale()) return;
-          setTimeout(function() { run(i + 1); }, gap);
+          setTimeout(function() { run(i + 1); }, gapAfter(i));
         });
       } else {
-        self._ttsSpeak({ text: p.text, language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gap); } });
+        self._ttsSpeak({ text: p.text, language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gapAfter(i)); } });
       }
     };
     run(0);
@@ -13907,4 +13912,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1671';
+window.__SERVER_VER = '20260823-1672';
