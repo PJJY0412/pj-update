@@ -500,7 +500,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div class="subject-card" data-subj="chinese">';
     html += '<div class="sc-icon">📖</div><div class="sc-name">语文课程</div><div class="sc-desc">' + (this._zhDataTitle() || '部编版同步') + '</div></div>';
     html += '<div class="subject-card" data-subj="math">';
-    html += '<div class="sc-icon">🔢</div><div class="sc-name">数学课程</div><div class="sc-desc">点击进入学习</div></div>';
+    html += '<div class="sc-icon">🔢</div><div class="sc-name">数学课程</div><div class="sc-desc">人教版数学</div></div>';
     html += '<div class="subject-card" data-subj="english">';
     html += '<div class="sc-icon">📚</div><div class="sc-name">英语课程</div><div class="sc-desc">广州教科版</div></div>';
     html += '</div>';
@@ -13863,4 +13863,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260822-1668';
+window.__SERVER_VER = '20260822-1669';
