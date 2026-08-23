@@ -1782,8 +1782,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
     const self = this;
-    this._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true });
-    document.getElementById('zh-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true }); });
+    this._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true, playTimes: 3 });
+    document.getElementById('zh-replay').addEventListener('click', () => { self._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true, playTimes: 3 }); });
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
         const oi = parseInt(btn.dataset.oi);
@@ -1797,6 +1797,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   _zhDailyListenDone() {
+    this.stopSpeaking();
     const main = document.getElementById('main-content');
     const total = this.zhQuizWords.length;
     const pct = total ? Math.round((this.zhQuizCorrect / total) * 100) : 0;
@@ -9508,11 +9509,15 @@ var SUPER_PW = 'pj889988';
     const ziT = String(zi || '').trim();
     const pyRaw = String(py || '').trim();
     const pySyllables = pyRaw.split(/[\s·,，、;；]+/).map(s => s.trim()).filter(s => s && /[a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]/i.test(s));
+    // playTimes=3：字·拼音·字 共3段（听音选字用）；默认2轮：字·拼音·字·拼音（其余场景不变）
+    const playTimes = (opts && opts.playTimes === 3) ? 3 : 2;
     const parts = [];
     if (ziT) parts.push({ text: ziT, isPy: false });
     pySyllables.forEach(function(sy) { parts.push({ text: sy, isPy: true }); });
-    if (ziT) parts.push({ text: ziT, isPy: false });
-    pySyllables.forEach(function(sy) { parts.push({ text: sy, isPy: true }); });
+    if (playTimes >= 2) {
+      if (ziT) parts.push({ text: ziT, isPy: false });
+      pySyllables.forEach(function(sy) { parts.push({ text: sy, isPy: true }); });
+    }
     if (!parts.length) {
       if (pyRaw) { self._ttsSpeak({ text: pyRaw, language: 'zh-CN', volume: 1, skipUrl: true, onEnd: onEnd || function() {} }); return; }
       if (onEnd) { try { onEnd(); } catch (e) {} }
@@ -10048,6 +10053,7 @@ var SUPER_PW = 'pj889988';
     const idx = this.zhQuizIdx;
     const main = document.getElementById('main-content');
     if (idx >= words.length) {
+      this.stopSpeaking();
       const pct = words.length ? Math.round((this.zhQuizCorrect / words.length) * 100) : 0;
       main.innerHTML = '<div class="reading-container">' + this._zhExitBtn() +
         '<h2 class="reading-title">🎯 练习完成</h2>' +
@@ -10088,12 +10094,12 @@ var SUPER_PW = 'pj889988';
       });
     } else {
       if (self._zhListenAutoTimer) { clearTimeout(self._zhListenAutoTimer); }
-      self._zhListenAutoTimer = setTimeout(function() { self._zhListenAutoTimer = null; self._zhSpeakSeq(q.zi, q.pinyin); }, 200);
+      self._zhListenAutoTimer = setTimeout(function() { self._zhListenAutoTimer = null; self._zhSpeakSeq(q.zi, q.pinyin, null, { playTimes: 3 }); }, 200);
     }
 
     document.getElementById('zh-q-replay').addEventListener('click', function() {
       self.stopSpeaking();
-      self._zhSpeakSeq(q.zi, q.pinyin);
+      self._zhSpeakSeq(q.zi, q.pinyin, null, { playTimes: 3 });
     });
     document.querySelectorAll('.zh-q-opt').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -10151,7 +10157,7 @@ var SUPER_PW = 'pj889988';
       this.zhQuizCorrect++;
       if (fb) fb.textContent = '✅ 回答正确！' + correct.zi + ' ' + (correct.yi || '');
       optBtns[oi].classList.add('correct');
-      this._zhSpeakSeq(correct.zi, correct.pinyin, null, this.zhQuizMode === 'dailyListen' ? { skipUrl: true } : null);
+      this._zhSpeakSeq(correct.zi, correct.pinyin, null, this.zhQuizMode === 'dailyListen' ? { skipUrl: true, playTimes: 3 } : { playTimes: 3 });
     } else {
       if (fb) fb.textContent = '❌ 答案是「' + correct.zi + '」';
       optBtns[oi].classList.add('wrong');
@@ -10159,7 +10165,7 @@ var SUPER_PW = 'pj889988';
         if (b.textContent.trim() === String(correct.zi)) b.classList.add('correct');
       });
       this._zhAddWrong(correct, this.zhQuizInfo);
-      this._zhSpeakSeq(correct.zi, correct.pinyin, null, this.zhQuizMode === 'dailyListen' ? { skipUrl: true } : null);
+      this._zhSpeakSeq(correct.zi, correct.pinyin, null, this.zhQuizMode === 'dailyListen' ? { skipUrl: true, playTimes: 3 } : { playTimes: 3 });
     }
     this.zhQuizIdx++;
     const scoreEl = document.getElementById('zh-q-score');
@@ -10168,11 +10174,7 @@ var SUPER_PW = 'pj889988';
         ? (this.zhQuizCorrect + ' / ' + Object.keys(this.zhQuizAnswered).length)
         : (this.zhQuizCorrect + ' / ' + this.zhQuizIdx);
     }
-    if (this.zhQuizMode === 'listen') {
-      this._zhQuizTimer = setTimeout(function() { self._zhQuizTimer = null; self._zhQuizNext(); }, 1400);
-    } else {
-      setTimeout(function() { self._zhQuizNext(); }, 1400);
-    }
+    this._zhQuizTimer = setTimeout(function() { self._zhQuizTimer = null; self._zhQuizNext(); }, 1400);
   },
 
   _zhQuizNext() {
@@ -13905,4 +13907,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1670';
+window.__SERVER_VER = '20260823-1671';
