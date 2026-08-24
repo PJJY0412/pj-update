@@ -1350,6 +1350,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     } catch (e) {}
   },
 
+  _getMathDailyWords() {
+    const sid = this.currentStudent ? this.currentStudent.id : null;
+    const hw = sid ? Storage.getHomeworkMath(sid) : null;
+    let words = hw ? this.getHomeworkWords(hw, 'math') : [];
+    if (!words.length) words = this.mathDailyWords || [];
+    return words;
+  },
+
   // 📋 口诀背诵
   startMathMemorize() {
     const words = this._getMathDailyWords();
@@ -14361,4 +14369,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1683';
+window.__SERVER_VER = '20260823-1684';
