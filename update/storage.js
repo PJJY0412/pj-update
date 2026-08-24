@@ -267,6 +267,17 @@ const Storage = {
     return list.find(s => s.name === name) || null;
   },
 
+  mergeStudents(list) {
+    if (!Array.isArray(list) || !list.length) return;
+    const existing = this.getStudents();
+    const dict = {};
+    existing.forEach(s => { if (s && s.name) dict[s.name] = s; });
+    list.forEach(s => { if (s && s.name) dict[s.name] = s; });
+    const merged = Object.values(dict);
+    this.save('students', merged);
+    console.log('合并学员完成，共', merged.length, '人');
+  },
+
   deleteStudent(id) {
     const prev = this._studentId;
     this._studentId = null;
