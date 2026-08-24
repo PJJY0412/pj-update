@@ -97,6 +97,7 @@ const App = {
     this._tryRestoreBackup();
     try {
       this.setupNavListeners();
+      this._syncStudentsFromCloud(); // 启动时同步学员名单
       this.renderLogin();
     } catch(e) {
       var el = document.getElementById('main-content');
@@ -4265,7 +4266,7 @@ main.innerHTML = html;
             return;
           }
         }
-        if (this._apkNoticeShown) return;
+if (this._apkNoticeShown) return;
         this._updLog('✅ 已是最新版本');
       })
       .catch(e => {
@@ -4276,6 +4277,44 @@ main.innerHTML = html;
         this._updLog('⏹ 立即改为尝试云端更新...');
         setTimeout(() => { try { this._checkCloudUpdate(0); } catch (e2) {} }, 300);
       });
+    },
+
+  // 从云端/局域网同步学员名单到本地
+  _syncStudentsFromCloud() {
+    const self = this;
+    const tryLan = () => {
+      const host = this._getSavedHost();
+      if (!host) return Promise.resolve(false);
+      return this._fetchJsonTimeout('http://' + host + ':8899/students.json', 5000)
+        .then(txt => {
+          try {
+            const list = JSON.parse(txt);
+            if (Array.isArray(list) && list.length) {
+              Storage.mergeStudents(list);
+              console.log('局域网同步学员:', list.length, '人');
+              return true;
+            }
+          } catch (e) {}
+          return false;
+        })
+        .catch(() => false);
+    };
+    const tryCloud = () => {
+      return this._fetchJsonTimeout('https://cdn.jsdelivr.net/gh/PJJY0412/pj-update@master/update/students.json', 8000)
+        .then(txt => {
+          try {
+            const list = JSON.parse(txt);
+            if (Array.isArray(list) && list.length) {
+              Storage.mergeStudents(list);
+              console.log('云端同步学员:', list.length, '人');
+              return true;
+            }
+          } catch (e) {}
+          return false;
+        })
+        .catch(() => false);
+    };
+    tryLan().then(ok => { if (!ok) tryCloud(); });
   },
 
   _cloudMetaUrl() {
@@ -14322,4 +14361,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1682';
+window.__SERVER_VER = '20260823-1683';
