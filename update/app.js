@@ -12291,8 +12291,16 @@ this.currentView = 'dictation';
 
   speakWord(word) {
     if (!word) return;
+    const w = String(word);
+    // 数学表达式/含中文/当前科目为数学 → 走中文 TTS（避开英语链路在坏平板上全灭）
+    const isMathExpr = /[\+\-\×\÷\=]/.test(w);
+    const hasZh = /[\u4e00-\u9fff]/.test(w);
+    if (isMathExpr || hasZh || this.currentSubject === 'math') {
+      this.speakChinese(w);
+      return;
+    }
     this._ttsCancel();
-    this._ttsSpeak({ text: String(word).replace(/\s*\/\s*/g, ', '), language: 'en-US', volume: 1 });
+    this._ttsSpeak({ text: w.replace(/\s*\/\s*/g, ', '), language: 'en-US', volume: 1 });
   },
 
   speakChinese(word) {
@@ -14021,4 +14029,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1680';
+window.__SERVER_VER = '20260823-1681';
