@@ -8556,7 +8556,7 @@ var SUPER_PW = 'pj889988';
         const uid = parseInt(btn.dataset.uid);
         const mode = btn.dataset.mmode;
         this.currentUnitId = uid;
-        if (mode === 'knowledge') { this.renderFlashcards(uid); }
+        if (mode === 'knowledge') { this.renderMathKnowledge(uid); }
         else if (mode === 'explain') { this.renderMathExplain(uid); }
         else if (mode === 'apply') { this.renderMathApply(uid); }
         else if (mode === 'practice') { this.startLesson(uid); }
@@ -11621,6 +11621,29 @@ this.currentView = 'dictation';
     }
   },
 
+  // 数学知识点：按公式/概念卡片展示
+  renderMathKnowledge(unitId) {
+    const words = this.getUnitWords(unitId);
+    if (words.length === 0) { this.renderGrades(); return; }
+    this.currentView = 'math-knowledge';
+    const ui = this.getUnitInfo(unitId);
+    let html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
+    html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 知识点</div></div>`;
+    words.forEach((w, i) => {
+      const term = String(w.en || '').trim();
+      const def = String(w.cn || '').trim();
+      html += `<div class="math-knowledge-card">
+        <div class="math-knowledge-term">${term}</div>
+        <div class="math-knowledge-def">${def}</div>
+      </div>`;
+    });
+    html += '</div>';
+    document.getElementById('main-content').innerHTML = html;
+    this.updateTopBar();
+  },
+
+  // 数学讲解：重点展示计算方法/步骤（cn 字段通常包含方法说明）
   renderMathExplain(unitId) {
     const words = this.getUnitWords(unitId);
     if (words.length === 0) { this.renderGrades(); return; }
@@ -11630,10 +11653,13 @@ this.currentView = 'dictation';
     html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
     html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 讲解</div></div>`;
     words.forEach((w, i) => {
-      html += `<div class="math-card">
-        <div class="math-card-term">${w.en}</div>
-        <div class="math-card-formula">${w.cn}</div>
-        ${w.example ? `<div class="math-card-example">${w.example}</div>` : ''}
+      const term = String(w.en || '').trim();
+      const method = String(w.cn || '').trim();
+      const example = w.example ? `<div class="math-explain-example">${w.example}</div>` : '';
+      html += `<div class="math-explain-card">
+        <div class="math-explain-title">${term}</div>
+        <div class="math-explain-method">${method}</div>
+        ${example}
       </div>`;
     });
     html += '</div>';
@@ -11641,6 +11667,7 @@ this.currentView = 'dictation';
     this.updateTopBar();
   },
 
+  // 数学应用：生成生活情境应用题（若有 example 则用例句，否则按公式生成应用题）
   renderMathApply(unitId) {
     const words = this.getUnitWords(unitId);
     if (words.length === 0) { this.renderGrades(); return; }
@@ -11648,11 +11675,31 @@ this.currentView = 'dictation';
     const ui = this.getUnitInfo(unitId);
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
-    html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 实际应用</div></div>`;
+    html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 应用</div></div>`;
     words.forEach((w, i) => {
-      html += `<div class="math-card">
-        <div class="math-card-term">${w.en}</div>
-        <div class="math-card-example">${w.example || '暂无应用示例'}</div>
+      const term = String(w.en || '').trim();
+      const def = String(w.cn || '').trim();
+      let applyText = '';
+      if (w.example) {
+        applyText = w.example;
+      } else if (term.includes('+') || term.includes('-') || term.includes('×') || term.includes('÷')) {
+        // 自动生成简单应用题
+        const nums = term.match(/\d+/g) || [];
+        if (nums.length >= 2) {
+          if (term.includes('+')) applyText = `生活中有 ${nums[0]} 个，又来了 ${nums[1]} 个，一共几个？算式：${term}`;
+          else if (term.includes('-')) applyText = `共有 ${nums[0]} 个，用了 ${nums[1]} 个，还剩几个？算式：${term}`;
+          else if (term.includes('×')) applyText = `每组 ${nums[1]} 个，共 ${nums[0]} 组，一共几个？算式：${term}`;
+          else if (term.includes('÷')) applyText = `把 ${nums[0]} 个平均分成 ${nums[1]} 份，每份几个？算式：${term}`;
+          else applyText = def;
+        } else {
+          applyText = def;
+        }
+      } else {
+        applyText = def || '暂无应用示例';
+      }
+      html += `<div class="math-apply-card">
+        <div class="math-apply-title">${term}</div>
+        <div class="math-apply-text">${applyText}</div>
       </div>`;
     });
     html += '</div>';
@@ -13974,4 +14021,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1679';
+window.__SERVER_VER = '20260823-1680';
