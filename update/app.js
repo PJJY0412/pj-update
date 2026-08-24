@@ -9930,6 +9930,7 @@ var SUPER_PW = 'pj889988';
       if (this.zhStrokePlaying) { this.zhStrokePlaying = false; this.stopSpeaking(); return; }
       const d = this._zhStrokeData;
       if (!d) return;
+      this.stopSpeaking();
       this.zhStrokePlaying = true;
       document.getElementById('zh-play-btn').textContent = '⏸ 暂停';
       this._zhPlayFrom(this.zhStrokeStep, d);
@@ -13973,4 +13974,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1677';
+window.__SERVER_VER = '20260823-1678';
