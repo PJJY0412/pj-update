@@ -1736,7 +1736,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       + '<button class="admin-gen-btn" id="zh-fc-back" style="flex:1">📚 返回语文作业</button>'
       + '</div>';
     html += '</div></div>';
-    main.innerHTML = html;
+    document.getElementById('main-content').innerHTML = html;
     document.getElementById('zh-fc-retry').addEventListener('click', () => this.startZhFcGame());
     document.getElementById('zh-fc-back').addEventListener('click', () => this._zhFcLeave());
   },
@@ -13953,4 +13953,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1674';
+window.__SERVER_VER = '20260823-1675';
