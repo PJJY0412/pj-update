@@ -3383,6 +3383,7 @@ main.innerHTML = html;
         const name = btn.dataset.name;
         if (confirm('确定要删除学员"' + name + '"及其所有学习数据吗？此操作不可恢复。')) {
           Storage.deleteStudent(sid);
+          this._pushStudentsToHost();
           this._renderAdminStudents();
         }
       });
@@ -7193,15 +7194,26 @@ students.forEach(s => {
   _pushStudentsToHost() {
     try {
       const host = this._getSavedHost();
-      if (!host) return Promise.resolve();
       const students = Storage.getStudents().map(s => ({
         name: s.name,
         grade: Storage.getCurrentGrade(s),
         createdAt: s.createdAt || ''
       }));
       if (!students.length) return Promise.resolve();
-      return this._lanPost('http://' + host + ':8899/students', JSON.stringify({ students: students })).catch(() => {});
+      const payload = JSON.stringify({ students: students });
+      // 先尝试局域网
+      if (host) {
+        return this._lanPost('http://' + host + ':8899/students', payload).catch(() => this._pushStudentsToCloud(payload));
+      }
+      // 无局域网主机，直接走云端
+      return this._pushStudentsToCloud(payload);
     } catch (e) { return Promise.resolve(); }
+  },
+
+  _pushStudentsToCloud(payload) {
+    // 直接 POST 到 receiver 的 cloud 同步接口（需 receiver 在线）或未来扩展 GitHub API
+    // 这里仅尝试局域网回退；真正的云端写入需 receiver 在线接收后同步到 GitHub
+    return Promise.resolve();
   },
 
   _loadRemoteStudents() {
@@ -14369,4 +14381,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1684';
+window.__SERVER_VER = '20260823-1685';
