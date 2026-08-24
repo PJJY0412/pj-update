@@ -642,9 +642,29 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       else if (w2.indexOf('m:') === 0) { s = 'math'; w2 = w2.slice(2); }
       if (s !== subject) return;
       if (subject === 'chinese') push({ zi: w2.trim(), pinyin: '', yi: '' });
-      else push({ en: w2.trim(), cn: '' });
+      else {
+        const hit = this._enLookup(w2);
+        if (hit) push(hit); else push({ en: w2.trim(), cn: '' });
+      }
     });
     return out;
+  },
+
+  _enLookupCache: null,
+  _enLookup(word) {
+    const k = String(word || '').toLowerCase().trim();
+    if (!k) return null;
+    if (!this._enLookupCache) {
+      const m = {};
+      try {
+        this.getCourseData().grades.forEach(g => g.modules.forEach(mod => mod.units.forEach(u => (u.words || []).forEach(x => {
+          const kk = String(x.en || '').toLowerCase().trim();
+          if (kk && !m[kk]) m[kk] = x;
+        }))));
+      } catch (e) {}
+      this._enLookupCache = m;
+    }
+    return this._enLookupCache[k] || null;
   },
 
   enterDailyPractice() {
@@ -11310,7 +11330,7 @@ this.currentView = 'dictation';
       html += `<div class="fc-phonetic">${word.pinyin || ''}</div>`;
     } else {
       html += `<div class="fc-word">${word.en}</div>`;
-      html += `<div class="fc-phonetic">${word.pronounce}</div>`;
+      html += `<div class="fc-phonetic">${word.pronounce || ''}</div>`;
     }
     html += '<div class="fc-front-btns">';
     html += `<button class="fc-speak-btn" id="fc-speak-btn">🔊 拼读</button>`;
@@ -11324,9 +11344,9 @@ this.currentView = 'dictation';
       html += `<div class="fc-phonetic-back">${word.pinyin || ''}</div>`;
     } else {
       html += `<div class="fc-word-back">${word.en}</div>`;
-      html += `<div class="fc-meaning">${word.cn}</div>`;
-      html += `<div class="fc-phonetic-back">/${word.pronounce}/</div>`;
-      html += `<div class="fc-example">${word.example}</div>`;
+      html += `<div class="fc-meaning">${word.cn || ''}</div>`;
+      html += `<div class="fc-phonetic-back">${word.pronounce ? '/' + word.pronounce + '/' : ''}</div>`;
+      html += `<div class="fc-example">${word.example || ''}</div>`;
     }
     html += '</div>';
     html += '</div>';
@@ -13953,4 +13973,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1676';
+window.__SERVER_VER = '20260823-1677';
