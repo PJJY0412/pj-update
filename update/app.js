@@ -14393,4 +14393,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260825-1686';
+window.__SERVER_VER = '20260825-1687';
