@@ -4335,7 +4335,12 @@ if (this._apkNoticeShown) return;
         })
         .catch(() => false);
     };
-    tryLan().then(ok => { if (!ok) tryCloud(); });
+    const refreshIfNeeded = () => {
+      try {
+        if (self.currentView === 'login') self.renderLogin();
+      } catch (e) {}
+    };
+    tryLan().then(ok => { if (!ok) return tryCloud(); }).then(refreshIfNeeded, refreshIfNeeded);
   },
 
   _cloudMetaUrl() {
@@ -14393,4 +14398,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260825-1687';
+window.__SERVER_VER = '20260826-1688';
