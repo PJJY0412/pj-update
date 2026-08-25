@@ -1153,13 +1153,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     cols.forEach(c => {
       const words = c.hw ? this.getHomeworkWords(c.hw, c.subj) : [];
       const unitTxt = c.subj === 'chinese' ? '字' : c.subj === 'math' ? '题' : '词';
-      html += '<div class="daily-subj-card" data-subj="' + c.subj + '" style="display:flex;align-items:center;gap:12px;padding:14px 16px;background:' + (words.length ? '#FFF' : '#F5F7FA') + ';border:1px solid ' + (words.length ? '#E0E0E0' : '#EEE') + ';border-radius:12px;margin-bottom:10px;cursor:' + (words.length ? 'pointer' : 'default') + '">';
+      html += '<div class="daily-subj-card" data-subj="' + c.subj + '" style="display:flex;align-items:center;gap:12px;padding:14px 16px;background:' + (words.length ? '#FFF' : '#FFF8F0') + ';border:1px solid ' + (words.length ? '#E0E0E0' : '#FFCC80') + ';border-radius:12px;margin-bottom:10px;cursor:pointer">';
       html += '<div style="font-size:26px">' + c.icon + '</div>';
       html += '<div style="flex:1">';
       html += '<div style="font-size:15px;font-weight:700">' + c.label + '作业</div>';
-      html += '<div style="font-size:12px;color:' + (words.length ? 'var(--text-light)' : '#BDBDBD') + '">' + (words.length ? '已布置 ' + words.length + ' ' + unitTxt : '未布置') + (c.hw && c.hw.assignedAt ? '（' + new Date(c.hw.assignedAt).toLocaleDateString('zh-CN') + '）' : '') + '</div>';
+      html += '<div style="font-size:12px;color:' + (words.length ? 'var(--text-light)' : '#E65100') + '">' + (words.length ? '已布置 ' + words.length + ' ' + unitTxt : '未布置 · 点进入查看') + (c.hw && c.hw.assignedAt ? '（' + new Date(c.hw.assignedAt).toLocaleDateString('zh-CN') + '）' : '') + '</div>';
       html += '</div>';
-      html += words.length ? '<span style="color:var(--primary);font-size:13px">开始 ▶</span>' : '';
+      html += '<span style="color:var(--primary);font-size:13px">开始 ▶</span>';
       html += '</div>';
     });
     html += '</div>';
@@ -1238,12 +1238,18 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   renderZhDailyModes() {
     const main = document.getElementById('main-content');
     const words = this.getZhDailyWords();
-    if (!words.length) { this.renderDailyHome(); return; }
     this.stopSpeaking();
     this.zhDailyWords = words;
     let html = '<div class="subject-container">';
     html += '<button class="back-btn" onclick="App.renderDailyHome()">← 返回每天必练</button>';
     html += '<h2 class="course-title">📘 语文作业·趣味练</h2>';
+    if (!words.length) {
+      html += '<div style="padding:0 16px"><div class="empty-state" style="padding:30px"><p>老师还未布置语文作业，先去完成课程学习吧</p></div></div>';
+      html += '</div>';
+      main.innerHTML = html;
+      this.updateTopBar();
+      return;
+    }
     html += '<div style="padding:0 16px">';
     html += '<div style="background:#FFF3E0;border:1px solid #FFCC80;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#E65100">共 <strong>' + words.length + '</strong> 个字词，挑一个玩法开始吧！</div>';
     html += '<div class="daily-modes">';
@@ -1286,13 +1292,19 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   renderMathDailyModes() {
     const main = document.getElementById('main-content');
     const words = this._getMathDailyWords();
-    if (!words.length) { this.renderDailyHome(); return; }
     this.mathDailyWords = words;
-    // 计算各模式进度
-    const prog = this._getMathModeProgress();
     let html = '<div class="subject-container">';
     html += '<button class="back-btn" onclick="App.renderDailyHome()">← 返回每天必练</button>';
     html += '<h2 class="course-title">📐 数学作业</h2>';
+    if (!words.length) {
+      html += '<div style="padding:0 16px"><div class="empty-state" style="padding:30px"><p>老师还未布置数学作业，先去完成课程学习吧</p></div></div>';
+      html += '</div>';
+      main.innerHTML = html;
+      this.updateTopBar();
+      return;
+    }
+    // 计算各模式进度
+    const prog = this._getMathModeProgress();
     html += '<div style="padding:0 16px">';
     html += '<div style="background:#E3F2FD;border:1px solid #90CAF9;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#1565C0">共 <strong>' + words.length + '</strong> 个知识点，选一个玩法开始吧！</div>';
     html += '<div class="daily-modes math-mode-grid">';
@@ -14381,4 +14393,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260823-1685';
+window.__SERVER_VER = '20260825-1686';
