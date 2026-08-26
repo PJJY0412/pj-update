@@ -12340,7 +12340,7 @@ this.currentView = 'dictation';
     return `
       <div class="question-text">${exercise.question}</div>
       <div class="fill-hint">${exercise.hint}</div>
-      <button class="speaker-btn" id="speaker-btn">?? 再听一遍</button>
+      <button class="speaker-btn" id="speaker-btn">🔊 再听一遍</button>
       <input type="text" class="fill-input" id="fill-input" placeholder="请输入单词..." autocomplete="off">
       <button class="submit-btn" id="submit-btn">确定</button>`;
   },
