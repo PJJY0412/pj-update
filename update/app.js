@@ -2242,6 +2242,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   _zhPyRender() {
+    this.stopSpeaking();
     const main = document.getElementById('main-content');
     const self = this;
     const idx = this.zhPyIdx;
@@ -2304,7 +2305,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         self._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true });
         const scoreEl = document.getElementById('zh-q-score');
         if (scoreEl) scoreEl.textContent = self.zhPyCorrect + ' / ' + Object.keys(self.zhPyAnswered).length;
-        self._zhPyTimer = setTimeout(function() { self._zhPyTimer = null; self.zhPyIdx++; self.zhPyLocked = false; self._zhPyRender(); }, 1300);
+        self._zhPyTimer = setTimeout(function() { self._zhPyTimer = null; self.stopSpeaking(); self.zhPyIdx++; self.zhPyLocked = false; self._zhPyRender(); }, 1300);
       });
     });
     const prevBtn = document.getElementById('zh-py-prev');
@@ -8179,7 +8180,7 @@ _loadAnswers() {
     ctx.textAlign = 'left';
     ctx.fillText('练习分布', 24, ty);
     let tx = 24, tty = ty + 27;
-    const typeMap = { exercise: '练习', flashcard: '闪卡', reading: '课文', review: '错题复', hearChoose: '听选', hearSpell: '听拼' };
+    const typeMap = { exercise: '练习', flashcard: '闪卡', reading: '课文', review: '错题复习', hearChoose: '听选', hearSpell: '听拼', zhStudy: '认读/诵读', zhListenQuiz: '听音选字', zhMeaning: '释义理解', zhAuthor: '作者朝代', zhStroke: '笔画学习', zhFlashcard: '翻卡', zhListenChoose: '听音选字', zhPinyin: '拼音训练', zhBubble: '口诀背诵', zhSay: '组词造句', zhFly: '拍苍蝇', mathKnowledge: '知识点', mathExplain: '讲解', mathApply: '应用', mathMemorize: '口诀背诵', mathChallenge: '闯关挑战', mathQuiz: '练习', mathPattern: '数字规律', mathCompare: '对比辨析', mathWrongReview: '错题重练' };
     Object.keys(typeStats).forEach(t => {
       const ts = typeStats[t];
       ctx.fillStyle = '#546E7A';
@@ -10140,6 +10141,7 @@ var SUPER_PW = 'pj889988';
     this.zhStudyIdx = 0;
     this.zhStudyAuto = false;
     this.currentView = 'zhStudy';
+    this.activeSessionId = Storage.startSession('zhStudy', uid, info.unitTitle, info.gradeTitle, { subject: 'chinese', totalItems: info.words.length });
     this._zhStudyRender(info);
   },
 
@@ -10286,6 +10288,7 @@ var SUPER_PW = 'pj889988';
     this.stopSpeaking();
     this.zhStrokeUid = uid;
     this.zhStrokeIdx = 0;
+    this.activeSessionId = Storage.startSession('zhStroke', uid, info.unitTitle, info.gradeTitle, { subject: 'chinese', totalItems: words.length });
     this.currentView = 'zhStroke';
 
     const main = document.getElementById('main-content');
@@ -10574,6 +10577,7 @@ var SUPER_PW = 'pj889988';
     this.zhQuizAnswered = {};
     if (this._zhQuizTimer) { clearTimeout(this._zhQuizTimer); this._zhQuizTimer = null; }
     if (this._zhListenAutoTimer) { clearTimeout(this._zhListenAutoTimer); this._zhListenAutoTimer = null; }
+    this.activeSessionId = Storage.startSession('zhListenQuiz', uid, info.unitTitle, info.gradeTitle, { subject: 'chinese', totalItems: words.length });
     this.currentView = 'zhQuiz';
     this._zhListenRender();
   },
@@ -10587,6 +10591,12 @@ var SUPER_PW = 'pj889988';
     if (idx >= words.length) {
       this.stopSpeaking();
       const pct = words.length ? Math.round((this.zhQuizCorrect / words.length) * 100) : 0;
+      if (this.activeSessionId) {
+        const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+        Storage.endSession(this.activeSessionId, { correctCount: this.zhQuizCorrect, wrongCount: words.length - this.zhQuizCorrect, totalItems: words.length, accuracy: pct, stars: stars, xp: this.zhQuizCorrect * 5 });
+        this.activeSessionId = null;
+        this._autoPushReport();
+      }
       main.innerHTML = '<div class="reading-container">' + this._zhExitBtn() +
         '<h2 class="reading-title">🎯 练习完成</h2>' +
         '<div class="quiz-summary">答对 ' + this.zhQuizCorrect + ' / ' + words.length +
@@ -10734,6 +10744,7 @@ var SUPER_PW = 'pj889988';
     this.zhMeaningCorrect = 0;
     this.zhMeaningDone = [];
     this.zhMeaningChosen = [];
+    this.activeSessionId = Storage.startSession('zhMeaning', uid, info.unitTitle, info.gradeTitle, { subject: 'chinese', totalItems: words.length });
     this.currentView = 'zhMeaning';
     this.zhMeaningQueue = this._zhMeaningQueue(words);
     this._zhMeaningRender();
@@ -10771,6 +10782,12 @@ var SUPER_PW = 'pj889988';
       const main = document.getElementById('main-content');
       const total = queue.length;
       const pct = total ? Math.round((this.zhMeaningCorrect / total) * 100) : 0;
+      if (this.activeSessionId) {
+        const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+        Storage.endSession(this.activeSessionId, { correctCount: this.zhMeaningCorrect, wrongCount: total - this.zhMeaningCorrect, totalItems: total, accuracy: pct, stars: stars, xp: this.zhMeaningCorrect * 5 });
+        this.activeSessionId = null;
+        this._autoPushReport();
+      }
       main.innerHTML = '<div class="reading-container">' + this._zhExitBtn() +
         '<h2 class="reading-title">🎯 释义练习完成</h2>' +
         '<div class="quiz-summary">答对 ' + this.zhMeaningCorrect + ' / ' + total +
@@ -11020,6 +11037,7 @@ var SUPER_PW = 'pj889988';
     this.zhAuthorWords = words;
     this.zhAuthorIdx = 0;
     this.zhAuthorCorrect = 0;
+    this.activeSessionId = Storage.startSession('zhAuthor', uid, info.unitTitle, info.gradeTitle, { subject: 'chinese', totalItems: words.length });
     this.currentView = 'zhAuthor';
     this._zhAuthorRender();
   },
@@ -11031,6 +11049,12 @@ var SUPER_PW = 'pj889988';
     if (idx >= words.length) {
       const main = document.getElementById('main-content');
       const pct = words.length ? Math.round((this.zhAuthorCorrect / words.length) * 100) : 0;
+      if (this.activeSessionId) {
+        const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+        Storage.endSession(this.activeSessionId, { correctCount: this.zhAuthorCorrect, wrongCount: words.length - this.zhAuthorCorrect, totalItems: words.length, accuracy: pct, stars: stars, xp: this.zhAuthorCorrect * 5 });
+        this.activeSessionId = null;
+        this._autoPushReport();
+      }
       main.innerHTML = '<div class="reading-container">' + this._zhExitBtn() +
         '<h2 class="reading-title">🏛 作者朝代练习完成</h2>' +
         '<div class="quiz-summary">答对 ' + this.zhAuthorCorrect + ' / ' + words.length +
@@ -12131,6 +12155,7 @@ this.currentView = 'dictation';
     if (words.length === 0) { this.renderGrades(); return; }
     this.currentView = 'math-knowledge';
     const ui = this.getUnitInfo(unitId);
+    this.activeSessionId = Storage.startSession('mathKnowledge', unitId, ui.unitTitle, ui.gradeTitle, { subject: 'math', totalItems: words.length });
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
     html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 知识点</div></div>`;
@@ -12153,6 +12178,7 @@ this.currentView = 'dictation';
     if (words.length === 0) { this.renderGrades(); return; }
     this.currentView = 'math-explain';
     const ui = this.getUnitInfo(unitId);
+    this.activeSessionId = Storage.startSession('mathExplain', unitId, ui.unitTitle, ui.gradeTitle, { subject: 'math', totalItems: words.length });
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
     html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 讲解</div></div>`;
@@ -12177,6 +12203,7 @@ this.currentView = 'dictation';
     if (words.length === 0) { this.renderGrades(); return; }
     this.currentView = 'math-apply';
     const ui = this.getUnitInfo(unitId);
+    this.activeSessionId = Storage.startSession('mathApply', unitId, ui.unitTitle, ui.gradeTitle, { subject: 'math', totalItems: words.length });
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
     html += `<div class="math-header"><div class="math-title">${ui.unitTitle}</div><div class="math-subtitle">${ui.gradeTitle} · 应用</div></div>`;
@@ -12921,11 +12948,19 @@ _ttsCancel() {
       ];
       const chainNet = function() {
         if (inApk) {
-          if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth && !skipUrl && Date.now() > (self._urlHangUntil || 0)) {
-            const urlTimeout = Math.max(4000, Math.min(10000, 1500 + text.length * 500));
-            self._ttsTryJavaUrl(urls[0], vol, function() {
-              if (alive()) self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
-            }, finDone, urlTimeout);
+          if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth && Date.now() > (self._urlHangUntil || 0)) {
+            if (!skipUrl) {
+              const urlTimeout = Math.max(4000, Math.min(10000, 1500 + text.length * 500));
+              self._ttsTryJavaUrl(urls[0], vol, function() {
+                if (alive()) self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
+              }, finDone, urlTimeout);
+            } else {
+              self._ttsTryNative(text, lang, vol, function() {
+                if (!alive()) return;
+                const urlTimeout = Math.max(4000, Math.min(10000, 1500 + text.length * 500));
+                self._ttsTryJavaUrl(urls[0], vol, trySynth, finDone, urlTimeout);
+              }, finDone, 8000);
+            }
             return;
           }
           self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
@@ -14431,6 +14466,32 @@ const body = {
     html += `<div class="report-summary-card"><div class="rsc-value">${completed.length}次</div><div class="rsc-label">总练习</div></div>`;
     html += '</div>';
 
+    const subNames = { english: '📗 英语', chinese: '📕 语文', math: '📘 数学' };
+    const subColors = { english: '#E3F2FD', chinese: '#FFF3E0', math: '#E8F5E9' };
+    const subStat = {};
+    completed.forEach(s => {
+      const sub = s.subject || 'english';
+      if (!subStat[sub]) subStat[sub] = { count: 0, min: 0, xp: 0, correct: 0, wrong: 0 };
+      subStat[sub].count++;
+      subStat[sub].min += Math.round(s.duration / 60);
+      subStat[sub].xp += s.xp || 0;
+      subStat[sub].correct += s.correctCount || 0;
+      subStat[sub].wrong += (s.wrongCount != null ? s.wrongCount : ((s.totalItems || 0) - (s.correctCount || 0)));
+    });
+    const activeSubs = Object.keys(subStat);
+    if (activeSubs.length > 0) {
+      html += '<h3 class="report-section-title">分科目统计</h3>';
+      html += '<div class="report-summary">';
+      activeSubs.forEach(sub => {
+        const ss = subStat[sub];
+        const acc = (ss.correct + ss.wrong) > 0 ? Math.round(ss.correct / (ss.correct + ss.wrong) * 100) : 0;
+        html += '<div class="report-summary-card" style="background:' + (subColors[sub] || '#F5F7FA') + '">';
+        html += '<div class="rsc-value">' + (subNames[sub] || sub) + '</div>';
+        html += '<div class="rsc-label">' + ss.count + '次 · ' + ss.min + '分钟 · 正确率' + acc + '%</div></div>';
+      });
+      html += '</div>';
+    }
+
     html += '<h3 class="report-section-title">学习记录</h3>';
     html += '<div class="report-session-list">';
 
@@ -14441,7 +14502,7 @@ const body = {
       const timeStr = startDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
       const endTimeStr = endDate ? endDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '—';
       const mins = Math.max(1, Math.round(s.duration / 60));
-      const typeMap = { exercise: '📝 练习', flashcard: '🃏 闪卡', reading: '📖 课文', review: '🔄 错题复习', hearChoose: '🎧 听选', hearSpell: '🎤 听拼' };
+      const typeMap = { exercise: '📝 练习', flashcard: '🃏 闪卡', reading: '📖 课文', review: '🔄 错题复习', hearChoose: '🎧 听选', hearSpell: '🎤 听拼', zhStudy: '📖 认读/诵读', zhListenQuiz: '🎧 听音选字', zhMeaning: '📝 释义理解', zhAuthor: '🏛 作者朝代', zhStroke: '✍ 笔画学习', zhFlashcard: '🃏 翻卡', zhListenChoose: '🎧 听音选字', zhPinyin: '✍️ 拼音训练', zhBubble: '🎲 口诀背诵', zhSay: '🎲 组词造句', zhFly: '🪰 拍苍蝇', mathKnowledge: '📋 知识点', mathExplain: '📖 讲解', mathApply: '📝 应用', mathMemorize: '📋 口诀背诵', mathChallenge: '🎯 闯关挑战', mathQuiz: '📝 练习', mathPattern: '🔢 数字规律', mathCompare: '🧩 对比辨析', mathWrongReview: '❌ 错题重练' };
       const typeLabel = typeMap[s.type] || s.type;
       const starsStr = s.stars > 0 ? '⭐'.repeat(s.stars) : '';
       const accColor = s.accuracy >= 90 ? 'var(--green)' : s.accuracy >= 60 ? 'var(--orange)' : 'var(--red)';
@@ -14538,4 +14599,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260826-1694';
+window.__SERVER_VER = '20260827-1697';
