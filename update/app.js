@@ -12946,20 +12946,22 @@ _ttsCancel() {
       const urls = [
         'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(text) + '&type=' + (zh ? 1 : 2)
       ];
+      const zn = zh ? ((self._zhWordIdx || {})[text]) : null;
       const chainNet = function() {
         if (inApk) {
-          if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth && Date.now() > (self._urlHangUntil || 0)) {
-            if (!skipUrl) {
+          if (typeof window.AndroidBackup.playUrl === 'function' && !noSynth) {
+            if (!skipUrl && Date.now() > (self._urlHangUntil || 0)) {
               const urlTimeout = Math.max(4000, Math.min(10000, 1500 + text.length * 500));
               self._ttsTryJavaUrl(urls[0], vol, function() {
                 if (alive()) self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
               }, finDone, urlTimeout);
-            } else {
-              self._ttsTryNative(text, lang, vol, function() {
+            } else if (skipUrl && zn == null) {
+              self._ttsTryJavaUrl(urls[0], vol, function() {
                 if (!alive()) return;
-                const urlTimeout = Math.max(4000, Math.min(10000, 1500 + text.length * 500));
-                self._ttsTryJavaUrl(urls[0], vol, trySynth, finDone, urlTimeout);
-              }, finDone, 8000);
+                self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
+              }, finDone, Math.max(4000, Math.min(10000, 1500 + text.length * 500)));
+            } else {
+              self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
             }
             return;
           }
@@ -12970,7 +12972,6 @@ _ttsCancel() {
         if (multiWord) { trySynth(); return; }
         self._ttsTryUrls(urls, vol, tryNative, finDone);
       };
-      const zn = zh ? ((self._zhWordIdx || {})[text]) : null;
       if (zn != null) {
         try { self._ttsDiag.push('词库播放'); } catch(e) {}
         if (window.AndroidBackup && typeof window.AndroidBackup.playSentenceSound === 'function') {
@@ -14599,4 +14600,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260827-1697';
+window.__SERVER_VER = '20260827-1699';
