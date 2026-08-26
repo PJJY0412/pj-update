@@ -1258,8 +1258,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       { k: 'listen', icon: '🎧', t: '听音选字', d: '听声音找对字' },
       { k: 'pinyin', icon: '✍️', t: '拼音训练营', d: '看字选对拼音' },
       { k: 'match', icon: '🧩', t: '识字配对', d: '字和意思连连看' },
-      { k: 'say', icon: '🎲', t: '组词造句秀', d: '动脑开口讲一讲' },
-      { k: 'fly', icon: '🪰', t: '拍苍蝇', d: '听读音拍中它' }
+      { k: 'say', icon: '🎲', t: '组词造句秀', d: '动脑开口讲一讲' }
     ];
     modes.forEach(m => {
       html += '<button class="dm-btn zhdm-btn" data-k="' + m.k + '" style="background:' + this._zhdColor(m.k) + '"><span class="dm-icon">' + m.icon + '</span><span class="dm-txt"><strong>' + m.t + '</strong><small>' + m.d + '</small></span></button>';
@@ -1277,14 +1276,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         else if (k === 'pinyin') this.startZhPyQuiz();
         else if (k === 'match') this.startMatchGame(null, words);
         else if (k === 'say') this.startZhSay();
-        else if (k === 'fly') this.startZhFly();
       });
     });
     this.updateTopBar();
   },
 
   _zhdColor(k) {
-    const map = { fc: '#FFF3E0', listen: '#E3F2FD', pinyin: '#E8F5E9', match: '#F3E5F5', say: '#FFEBEE', fly: '#E0F7FA' };
+    const map = { fc: '#FFF3E0', listen: '#E3F2FD', pinyin: '#E8F5E9', match: '#F3E5F5', say: '#FFEBEE' };
     return map[k] || '#FFF';
   },
 
@@ -1374,6 +1372,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   startMathMemorize() {
     const words = this._getMathDailyWords();
     if (!words.length) { this.renderMathDailyModes(); return; }
+    this.activeSessionId = Storage.startSession('mathMemorize', 0, '每天必练·数学·口诀背诵', '', { subject: 'math', totalItems: words.length });
     this._mathMem = { words: words, idx: 0, flipped: false, known: {}, autoPlay: false, timer: null };
     this._renderMathMem();
   },
@@ -1443,6 +1442,11 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const total = st.words.length;
     const pct = total ? Math.round(knownCount / total * 100) : 0;
     const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: knownCount, wrongCount: total - knownCount, totalItems: total, accuracy: pct, stars: stars, xp: knownCount * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     this._saveMathModeProgress('memorize', stars);
     this._mathMemCleanup();
     let html = '<div class="math-container"><div class="quiz-summary">';
@@ -1535,6 +1539,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     // 闯关配置：题量、时间限制、连胜奖励
     const config = { total: Math.min(words.length, 15), timePerQ: 15, streakBonus: 2 };
     const shuffled = words.slice().sort(() => Math.random() - 0.5).slice(0, config.total);
+    this.activeSessionId = Storage.startSession('mathChallenge', 0, '每天必练·数学·闯关挑战', '', { subject: 'math', totalItems: shuffled.length });
     this._mathChallenge = {
       config: config,
       words: shuffled,
@@ -1617,8 +1622,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
   _mathChallengeFinish() {
     const ch = this._mathChallenge;
-    const pct = ch.words.length ? Math.round(ch.score / (ch.words.length * 3) * 100) : 0; // 基础分3倍
+    const pct = ch.words.length ? Math.round(ch.score / (ch.words.length * 3) * 100) : 0;
     const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: ch.score, wrongCount: Math.max(0, ch.words.length * 3 - ch.score), totalItems: ch.words.length * 3, accuracy: pct, stars: stars, xp: ch.score });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     this._saveMathModeProgress('challenge', stars);
     this._mathChallengeCleanup();
     let html = '<div class="math-container"><div class="quiz-summary">';
@@ -1639,6 +1649,11 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const total = st.pairs.length;
     const pct = total ? Math.round(st.score / total * 100) : 0;
     const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: st.score, wrongCount: total - st.score, totalItems: total, accuracy: pct, stars: stars, xp: st.score * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     this._saveMathModeProgress('compare', stars);
     this._mathCmp = null;
     let html = '<div class="math-container"><div class="quiz-summary">';
@@ -1655,6 +1670,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     if (!words.length) { this.renderMathDailyModes(); return; }
     const total = Math.min(words.length, 10);
     const shuffled = words.slice().sort(function() { return Math.random() - 0.5; }).slice(0, total);
+    this.activeSessionId = Storage.startSession('mathQuiz', 0, '每天必练·数学·' + title, '', { subject: 'math', totalItems: total });
     this._mathQuiz = { title: title, words: shuffled, idx: 0, score: 0, answered: false };
     this._renderMathQuiz();
   },
@@ -1726,10 +1742,15 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     return opts.sort(function() { return Math.random() - 0.5; });
   },
 
-  _renderMathQuizResult() {
-    var q = this._mathQuiz;
+  _renderMathQuizResult(data) {
+    var q = data || this._mathQuiz;
     var pct = Math.round(q.score / q.words.length * 100);
     var stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: q.score, wrongCount: q.words.length - q.score, totalItems: q.words.length, accuracy: pct, stars: stars, xp: q.score * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     var starStr = '⭐'.repeat(stars) + '☆'.repeat(3 - stars);
     var html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
@@ -1752,6 +1773,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       if (p) patterns.push(p);
     }
     if (!patterns.length) { alert('暂无法生成数字规律题'); this.renderMathDailyModes(); return; }
+    this.activeSessionId = Storage.startSession('mathPattern', 0, '每天必练·数学·数字规律', '', { subject: 'math', totalItems: patterns.length });
     this._mathPattern = { patterns: patterns, idx: 0, score: 0, answered: false };
     this._renderMathPattern();
   },
@@ -1852,6 +1874,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     }
     if (!pairs.length) { alert('暂无法生成对比题'); this.renderMathDailyModes(); return; }
     pairs = pairs.sort(function() { return Math.random() - 0.5; });
+    this.activeSessionId = Storage.startSession('mathCompare', 0, '每天必练·数学·对比辨析', '', { subject: 'math', totalItems: pairs.length });
     this._mathCmp = { pairs: pairs, idx: 0, score: 0, answered: false };
     this._renderMathCompare();
   },
@@ -1938,6 +1961,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       relearn: {},
       seqDone: false
     };
+    this.activeSessionId = Storage.startSession('zhFlashcard', 0, '每天必练·语文·翻卡', '', { subject: 'chinese', totalItems: words.length });
     this.currentView = 'zhFc';
     this._zhFcRender();
     this.updateTopBar();
@@ -2052,6 +2076,11 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const total = f.words.length;
     const ratio = total ? f.firstOk / total : 0;
     const stars = ratio >= 0.9 ? 3 : ratio >= 0.6 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: f.firstOk, wrongCount: total - f.firstOk, totalItems: total, accuracy: Math.round(ratio * 100), stars: stars, xp: f.firstOk * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     const relearnZis = Object.keys(f.relearn).map(i => String(f.words[i].zi || '')).filter(z => z);
     let html = '<div class="reading-container">';
     html += '<button class="back-btn" onclick="App._zhFcLeave()">← 返回语文作业</button>';
@@ -2081,10 +2110,11 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     if (words.length < 2) { this.renderZhDailyModes(); return; }
     this.stopSpeaking();
     this.zhQuizMode = 'dailyListen';
-    this.zhQuizInfo = { unitId: 0, unitTitle: '每天必练·语文', gradeTitle: '', words: words };
+    this.zhQuizInfo = { unitId: 0, unitTitle: '每天必练·语文·听音选字', gradeTitle: '', words: words };
     this.zhQuizWords = words.slice();
     this.zhQuizIdx = 0;
     this.zhQuizCorrect = 0;
+    this.activeSessionId = Storage.startSession('zhListenChoose', 0, '每天必练·语文·听音选字', '', { subject: 'chinese', totalItems: words.length });
     this.currentView = 'zhQuiz';
     this._zhDailyListenRender();
   },
@@ -2134,7 +2164,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     this.stopSpeaking();
     const main = document.getElementById('main-content');
     const total = this.zhQuizWords.length;
-    const pct = total ? Math.round((this.zhQuizCorrect / total) * 100) : 0;
+    const correct = this.zhQuizCorrect;
+    const pct = total ? Math.round((correct / total) * 100) : 0;
+    const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: correct, wrongCount: total - correct, totalItems: total, accuracy: pct, stars: stars, xp: correct * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     let html = '<div class="reading-container">';
     html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
     html += '<h2 class="reading-title">🎯 挑战完成</h2>';
@@ -2163,6 +2200,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     this.zhPyLocked = false;
     this.zhPyAnswered = {};
     if (this._zhPyTimer) { clearTimeout(this._zhPyTimer); this._zhPyTimer = null; }
+    this.activeSessionId = Storage.startSession('zhPinyin', 0, '每天必练·语文·拼音训练营', '', { subject: 'chinese', totalItems: uniq.length });
     this.currentView = 'zhPy';
     this._zhPyRender();
   },
@@ -2288,7 +2326,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _zhPyDone() {
     const main = document.getElementById('main-content');
     const t = this.zhPyTotal;
-    const pct = t ? Math.round((this.zhPyCorrect / t) * 100) : 0;
+    const correct = this.zhPyCorrect;
+    const pct = t ? Math.round((correct / t) * 100) : 0;
+    const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: correct, wrongCount: t - correct, totalItems: t, accuracy: pct, stars: stars, xp: correct * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     let html = '<div class="reading-container">';
     html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
     html += '<h2 class="reading-title">🏅 拼音小达人</h2>';
@@ -2308,6 +2353,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const words = this.zhDailyWords.filter(w => String(w.zi || '').trim());
     if (words.length < 2) { this.renderZhDailyModes(); return; }
     this.stopSpeaking();
+    this.activeSessionId = Storage.startSession('zhBubble', 0, '每天必练·语文·口诀背诵', '', { subject: 'chinese', totalItems: words.length });
     this.zhBubbleWords = words;
     this.zhBubbleIdx = 0;
     this.zhBubbleScore = 0;
@@ -2386,10 +2432,18 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _zhBubbleDone() {
     const main = document.getElementById('main-content');
     const t = this.zhBubbleWords.length;
+    const score = this.zhBubbleScore;
+    const pct = t ? Math.round(score / t * 100) : 0;
+    const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: score, wrongCount: t - score, totalItems: t, accuracy: pct, stars: stars, xp: score * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     let html = '<div class="reading-container">';
     html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
     html += '<h2 class="reading-title">🎈 寻宝完成</h2>';
-    html += '<div class="quiz-summary">抓到 <strong>' + this.zhBubbleScore + '</strong> / ' + t + ' 个'
+    html += '<div class="quiz-summary">抓到 <strong>' + score + '</strong> / ' + t + ' 个'
       + (this.zhBubbleScore === t ? ' 🎉 火眼金睛！' : this.zhBubbleScore >= t * 0.6 ? ' 👍 好眼力！' : ' 💪 再玩一轮！') + '</div>';
     html += '<button class="continue-btn" style="margin-top:16px" onclick="App.renderZhDailyModes()">再来一关</button>';
     html += '</div>';
@@ -2404,6 +2458,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const words = this.zhDailyWords.filter(w => String(w.zi || '').trim());
     if (!words.length) { this.renderZhDailyModes(); return; }
     this.stopSpeaking();
+    this.activeSessionId = Storage.startSession('zhSay', 0, '每天必练·语文·组词造句', '', { subject: 'chinese', totalItems: words.length });
     this.zhSayWords = words;
     this.zhSayIdx = 0;
     this.zhSayStars = 0;
@@ -2460,102 +2515,20 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _zhSayDone() {
     const main = document.getElementById('main-content');
     const t = this.zhSayWords.length;
+    const starsCount = this.zhSayStars;
+    const pct = t ? Math.round(starsCount / t * 100) : 0;
+    const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: starsCount, wrongCount: t - starsCount, totalItems: t, accuracy: pct, stars: stars, xp: starsCount * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
     let html = '<div class="reading-container">';
     html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
     html += '<h2 class="reading-title">🎤 语言小明星</h2>';
-    html += '<div class="quiz-summary">完成 ' + t + ' 个 · 收获 <strong>' + this.zhSayStars + '</strong> 颗星'
+    html += '<div class="quiz-summary">完成 ' + t + ' 个 · 收获 <strong>' + starsCount + '</strong> 颗星'
       + (this.zhSayStars >= t ? ' 🌟 口才了得！' : this.zhSayStars >= Math.ceil(t / 2) ? ' 👍 大胆开口真棒！' : ' 😊 下次多开口更棒！') + '</div>';
     html += '<button class="continue-btn" style="margin-top:16px" onclick="App.renderZhDailyModes()">返回语文作业</button>';
-    html += '</div>';
-    main.innerHTML = html;
-  },
-
-  // 🪰 拍苍蝇
-  zhFlyIdx: 0,
-  zhFlyScore: 0,
-  zhFlyTimer: null,
-
-  startZhFly() {
-    const words = this.zhDailyWords.filter(w => String(w.zi || '').trim());
-    if (words.length < 2) { this.renderZhDailyModes(); return; }
-    this.stopSpeaking();
-    this.zhFlyWords = words;
-    this.zhFlyIdx = 0;
-    this.zhFlyScore = 0;
-    this.zhFlyDone = false;
-    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
-    this.currentView = 'zhFly';
-    this._zhFlyRender();
-  },
-
-  _zhFlyRender() {
-    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
-    const main = document.getElementById('main-content');
-    const idx = this.zhFlyIdx;
-    const words = this.zhFlyWords;
-    if (idx >= words.length) { this._zhFlyDone(); return; }
-    const q = words[idx];
-    const pool = this._zhFillPool(words, 6);
-    const correctPos = Math.floor(Math.random() * pool.length);
-    let html = '<div class="reading-container">';
-    html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
-    html += '<h2 class="reading-title">🪰 拍苍蝇</h2>';
-    html += '<div class="quiz-area">';
-    html += '<div class="zh-daily-target">听读音，拍中那只「<span class="zh-daily-target-char">' + q.zi + '</span>」！</div>';
-    html += '<div class="zh-bubble-arena zh-fly-arena" id="zh-fly-arena" style="height:52vh">';
-    pool.forEach((w, i) => {
-      const left = 4 + Math.random() * 66;
-      const top = 4 + Math.random() * 58;
-      html += '<button class="zh-fly" data-pos="' + i + '" data-zi="' + w.zi + '" style="left:' + left + '%;top:' + top + '%;animation-duration:' + (2 + Math.random() * 2.5) + 's;animation-delay:' + (-1 * Math.random() * 2) + 's"><span class="zh-fly-icon">🪰</span>' + w.zi + '</button>';
-    });
-    html += '</div>';
-    html += '<div class="zh-q-fb" id="zh-fly-fb">预备……听！👂</div>';
-    html += '<div class="zh-q-score" id="zh-fly-score">拍中 ' + this.zhFlyScore + ' 只</div>';
-    html += '</div></div>';
-    main.innerHTML = html;
-    const self = this;
-    this._zhSpeakSeq(q.zi, q.pinyin, null, { skipUrl: true });
-    document.querySelectorAll('.zh-fly').forEach(el => {
-      el.addEventListener('click', () => {
-        if (self.zhFlyDone) return;
-        const zi = el.dataset.zi;
-        const fb = document.getElementById('zh-fly-fb');
-        if (zi === String(q.zi).trim()) {
-          el.classList.add('zh-fly-hit');
-          self.zhFlyScore++;
-          if (fb) fb.textContent = '✅ 啪！拍中啦！';
-          const scoreEl = document.getElementById('zh-fly-score');
-          if (scoreEl) scoreEl.textContent = '拍中 ' + self.zhFlyScore + ' 只';
-          self.zhFlyDone = true;
-          setTimeout(function() { self.zhFlyIdx++; self.zhFlyDone = false; self._zhFlyRender(); }, 900);
-        } else {
-          el.classList.add('zh-fly-miss');
-          if (fb) fb.textContent = '❌ 拍空了，听准再拍！';
-          setTimeout(function() { el.classList.remove('zh-fly-miss'); }, 300);
-        }
-      });
-    });
-    this.zhFlyTimer = setInterval(function() {
-      const arena = document.getElementById('zh-fly-arena');
-      if (!arena) return;
-      if (self.zhFlyDone) return;
-      document.querySelectorAll('.zh-fly').forEach(el => {
-        el.style.left = (4 + Math.random() * 66) + '%';
-        el.style.top = (4 + Math.random() * 58) + '%';
-      });
-    }, 1400);
-  },
-
-  _zhFlyDone() {
-    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
-    const main = document.getElementById('main-content');
-    const t = this.zhFlyWords.length;
-    let html = '<div class="reading-container">';
-    html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
-    html += '<h2 class="reading-title">🏓 捕蝇小能手</h2>';
-    html += '<div class="quiz-summary">拍中 <strong>' + this.zhFlyScore + '</strong> / ' + t + ' 只'
-      + (this.zhFlyScore === t ? ' 🎉 一拍一个准！' : this.zhFlyScore >= t * 0.6 ? ' 👍 身手敏捷！' : ' 💪 耳朵再练练！') + '</div>';
-    html += '<button class="continue-btn" style="margin-top:16px" onclick="App.renderZhDailyModes()">再来一关</button>';
     html += '</div>';
     main.innerHTML = html;
   },
@@ -3365,22 +3338,7 @@ main.innerHTML = html;
         }
       });
     });
-    document.querySelectorAll('.share-img-card-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const sid = parseInt(btn.dataset.sid);
-        const name = btn.dataset.name;
-        const data = Storage.getStudentData(sid);
-        const sessions = data.sessions.filter(s => s.completed);
-        let totalMin = 0; sessions.forEach(s => { totalMin += Math.max(1, Math.round((s.duration || 0) / 60)); });
-        const previewDiv = document.getElementById('preview-' + sid);
-        let wwc = 0; try { const p = Storage.getStudent(); Storage.loginStudent(sid); wwc = Storage.getWrongWords().length; if (p) Storage.loginStudent(p); else Storage.logout(); } catch (e) {}
-        this._generateShareImage(data, sessions, totalMin, name, previewDiv, wwc);
-      });
-    });
-  },
-
-  _adminStudentCardHtml(d, period, periodStart) {
+    container.querySelectorAll('.asc-del-btn').forEach(btn => {
     const allSessions = d.sessions.filter(s => s.completed);
     const start = (periodStart && periodStart[period]) || 0;
     const sessions = start ? allSessions.filter(s => new Date(s.startTime).getTime() >= start) : allSessions;
@@ -3418,8 +3376,6 @@ main.innerHTML = html;
     html += '<div class="asc-item"><span class="asc-val">' + lastDate + '</span><span class="asc-lbl">最近练习</span></div>';
     html += '<div class="asc-item"><span class="asc-val">' + (typeCount.exercise || 0) + '/' + (typeCount.flashcard || 0) + '/' + (typeCount.reading || 0) + '</span><span class="asc-lbl">练习/闪卡/课文</span></div>';
     html += '</div>';
-    html += '<button class="share-img-card-btn" style="font-size:12px;padding:6px 14px" data-sid="' + d.student.id + '" data-name="' + this._h(d.student.name) + '">📸 生成分享图</button>';
-    html += '<div class="share-card-preview" id="preview-' + d.student.id + '"></div>';
     html += '</div>';
     return html;
   },
@@ -8088,7 +8044,7 @@ _loadAnswers() {
     var fileName = name + '_学情报告.png';
     var preview = previewDiv || document.getElementById('share-img-preview');
     if (!preview) return;
-    preview.innerHTML = '<p style="margin:8px;font-size:12px;color:var(--text-light)">预览（点击图片保存）</p><a class="share-img-link" href="' + shareUrl + '" download="' + fileName + '" style="display:block;text-decoration:none"><img src="' + img + '" style="max-width:100%;border-radius:12px;box-shadow:var(--shadow);display:block"></a><div style="text-align:center;margin-top:8px"><button class="share-share-btn" style="padding:10px 24px;border:none;border-radius:10px;background:#07C160;color:#fff;font-size:15px;cursor:pointer">分享到微信</button></div><p id="share-status" style="margin:6px;font-size:12px;color:var(--text-light)"></p>';
+    preview.innerHTML = '<a class="share-img-link" href="' + shareUrl + '" download="' + fileName + '" style="display:block;text-decoration:none"><img src="' + img + '" style="max-width:100%;border-radius:12px;box-shadow:var(--shadow);display:block"></a><div style="text-align:center;margin-top:8px"><button class="share-share-btn" style="padding:10px 24px;border:none;border-radius:10px;background:#07C160;color:#fff;font-size:15px;cursor:pointer">分享到微信</button></div><p id="share-status" style="margin:6px;font-size:12px;color:var(--text-light)"></p>';
     var statusEl = preview.querySelector('#share-status');
     var st = function(t) { if (statusEl) { try { statusEl.textContent = t; } catch(e) {} } };
     var shareUrl = URL.createObjectURL(shareBlob);
@@ -11349,7 +11305,6 @@ this.currentView = 'dictation';
     this.zhStudyAuto = false;
     this.zhStrokePlaying = false;
     if (this.zhStrokeTimer) { clearInterval(this.zhStrokeTimer); this.zhStrokeTimer = null; }
-    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
     if (this.dcTimer) { clearTimeout(this.dcTimer); this.dcTimer = null; }
     if (this._dcFallback) { clearTimeout(this._dcFallback); this._dcFallback = null; }
     if (this.fcAutoTimer) { clearTimeout(this.fcAutoTimer); this.fcAutoTimer = null; }
@@ -14399,4 +14354,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260826-1691';
+window.__SERVER_VER = '20260826-1692';
