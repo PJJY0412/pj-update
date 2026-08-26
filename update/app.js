@@ -3338,7 +3338,40 @@ main.innerHTML = html;
         }
       });
     });
-    container.querySelectorAll('.asc-del-btn').forEach(btn => {
+    document.querySelectorAll('.share-img-card-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sid = parseInt(btn.dataset.sid);
+        const name = btn.dataset.name;
+        const data = Storage.getStudentData(sid);
+        let sessions = data.sessions.filter(s => s.completed);
+        let totalMin = 0; sessions.forEach(s => { totalMin += Math.max(1, Math.round((s.duration || 0) / 60)); });
+        const previewDiv = document.getElementById('preview-' + sid);
+        let wwc = 0; try { const p = Storage.getStudent(); Storage.loginStudent(sid); wwc = Storage.getWrongWords().length; if (p) Storage.loginStudent(p); else Storage.logout(); } catch (e) {}
+        const archived = this._getArchivedReportForStudent(sid);
+        if (archived && archived.stats) {
+          const rep = archived.stats;
+          if (totalMin === 0 && rep.minutes > 0) totalMin = rep.minutes;
+          if (sessions.length === 0 && rep.history > 0) {
+            sessions = [{ completed: true, type: 'report-merged', correctCount: rep.wrongs != null ? Math.round((rep.history * 80) / 100) : 0, wrongCount: rep.wrongs || 0, totalItems: rep.wrongs != null ? Math.round((rep.history * 80) / 100) + rep.wrongs : 0, duration: (rep.minutes || 0) * 60, startTime: rep.lastPractice || new Date().toISOString(), subject: 'english' }];
+            data.progress = data.progress || {};
+            data.progress.totalXP = rep.xp || data.progress.totalXP || 0;
+            data.progress.level = rep.level || data.progress.level || 1;
+            data.progress.streak = rep.streak || data.progress.streak || 0;
+            data.progress.completedLessons = data.progress.completedLessons || {};
+            if (rep.lessons) for (let _i = 0; _i < rep.lessons; _i++) data.progress.completedLessons['rpt_' + _i] = true;
+          }
+          if (rep.subjects) {
+            const subKeys = Object.keys(rep.subjects);
+            subKeys.forEach(sk => { const ss = rep.subjects[sk]; if (ss && ss.sessions > 0 && !sessions.some(s => s.subject === sk)) { for (let _si = 0; _si < ss.sessions; _si++) { sessions.push({ completed: true, type: 'report-merged', subject: sk, correctCount: Math.round(ss.total * (ss.accuracy || 80) / 100 / Math.max(1, ss.sessions)), wrongCount: Math.round(ss.total * (100 - (ss.accuracy || 80)) / 100 / Math.max(1, ss.sessions)), totalItems: Math.round(ss.total / Math.max(1, ss.sessions)), duration: Math.round(ss.minutes * 60 / Math.max(1, ss.sessions)), startTime: rep.lastPractice || new Date().toISOString() }); } } });
+          }
+        }
+        this._generateShareImage(data, sessions, totalMin, name, previewDiv, wwc);
+      });
+    });
+  },
+
+  _adminStudentCardHtml(d, period, periodStart) {
     const allSessions = d.sessions.filter(s => s.completed);
     const start = (periodStart && periodStart[period]) || 0;
     const sessions = start ? allSessions.filter(s => new Date(s.startTime).getTime() >= start) : allSessions;
@@ -3376,6 +3409,20 @@ main.innerHTML = html;
     html += '<div class="asc-item"><span class="asc-val">' + lastDate + '</span><span class="asc-lbl">最近练习</span></div>';
     html += '<div class="asc-item"><span class="asc-val">' + (typeCount.exercise || 0) + '/' + (typeCount.flashcard || 0) + '/' + (typeCount.reading || 0) + '</span><span class="asc-lbl">练习/闪卡/课文</span></div>';
     html += '</div>';
+    const subStats = { english: {correct:0,wrong:0,min:0,cnt:0}, chinese: {correct:0,wrong:0,min:0,cnt:0}, math: {correct:0,wrong:0,min:0,cnt:0} };
+    allSessions.forEach(s => { const sub = s.subject || 'english'; if (subStats[sub]) { subStats[sub].correct += s.correctCount || 0; subStats[sub].wrong += s.wrongCount || 0; subStats[sub].min += Math.round((s.duration||0)/60); subStats[sub].cnt++; } });
+    const subLabels = {english:'英语',chinese:'语文',math:'数学'};
+    const subColors = {english:'#1565C0',chinese:'#C62828',math:'#2E7D32'};
+    let hasSubData = false;
+    ['english','chinese','math'].forEach(sk => { if (subStats[sk].cnt > 0) hasSubData = true; });
+    if (hasSubData) {
+      html += '<div style="margin:8px 0;padding:8px;background:rgba(0,0,0,0.03);border-radius:8px">';
+      html += '<div style="font-size:11px;color:var(--text-light);margin-bottom:6px">📚 分科目学习</div>';
+      ['english','chinese','math'].forEach(sk => { const st = subStats[sk]; if (st.cnt === 0) return; const acc = (st.correct+st.wrong) > 0 ? Math.round(st.correct/(st.correct+st.wrong)*100) : 0; html += '<div style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:12px"><span style="color:'+subColors[sk]+';font-weight:700;width:28px">'+subLabels[sk]+'</span><div style="flex:1;height:6px;background:#e0e0e0;border-radius:3px;overflow:hidden"><div style="height:100%;width:'+acc+'%;background:'+subColors[sk]+';border-radius:3px"></div></div><span style="font-size:11px;color:var(--text-light);width:60px;text-align:right">'+st.cnt+'次·'+acc+'%</span></div>'; });
+      html += '</div>';
+    }
+    html += '<button class="share-img-card-btn" style="font-size:12px;padding:6px 14px;margin-top:6px" data-sid="' + d.student.id + '" data-name="' + this._h(d.student.name) + '">📸 生成分享图</button>';
+    html += '<div class="share-card-preview" id="preview-' + d.student.id + '"></div>';
     html += '</div>';
     return html;
   },
@@ -7373,7 +7420,33 @@ students.forEach(s => {
       if (cur.indexOf(k) < 0) cur.push(k);
       while (cur.length > 2000) cur.shift();
       localStorage.setItem('vocab_archived_rep', JSON.stringify(cur));
+      if (r && r.stats) {
+        const dataMap = JSON.parse(localStorage.getItem('vocab_archived_rep_data') || '{}');
+        dataMap[k] = { name: r.name, grade: r.grade || '', stats: r.stats, updatedAt: r.updatedAt || '' };
+        const keys = Object.keys(dataMap);
+        if (keys.length > 2000) { const old = keys.slice(0, keys.length - 2000); old.forEach(ok => delete dataMap[ok]); }
+        localStorage.setItem('vocab_archived_rep_data', JSON.stringify(dataMap));
+      }
     } catch (e) {}
+  },
+
+  _getArchivedReportForStudent(studentId) {
+    try {
+      const students = Storage.getStudents();
+      const student = students.find(s => s.id === studentId);
+      if (!student) return null;
+      const grade = Storage.getCurrentGrade(student);
+      const name = student.name;
+      const dataMap = JSON.parse(localStorage.getItem('vocab_archived_rep_data') || '{}');
+      let best = null;
+      Object.keys(dataMap).forEach(k => {
+        const entry = dataMap[k];
+        if (entry && entry.name === name && String(entry.grade) === String(grade)) {
+          if (!best || String(entry.updatedAt || '') > String(best.updatedAt || '')) best = entry;
+        }
+      });
+      return best;
+    } catch (e) { return null; }
   },
 
   _gradeReport(r) {
