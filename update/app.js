@@ -12918,6 +12918,10 @@ _ttsCancel() {
     const vol = Math.max(0, Math.min(1, (opts.volume != null) ? opts.volume : 1));
     // 新发音前清空原生队列：Android TTS 默认排队播放，不清会与上一句叠加混音
     try { if (window.AndroidBackup && typeof window.AndroidBackup.stopSpeak === 'function') { window.AndroidBackup.stopSpeak(); } } catch(e) {}
+    // 清空旧的原生回调/守卫，防止上一个音频的迟到 notifyTtsEnd 误触发新词的 finDone
+    this._ttsNativeEndCb = null;
+    this._ttsNativeFailCb = null;
+    if (this._ttsNativeGuard) { clearTimeout(this._ttsNativeGuard); this._ttsNativeGuard = null; }
     const self = this;
     const mySeq = (this._ttsSeq = (this._ttsSeq || 0) + 1);
     const alive = function() { return self._ttsSeq === mySeq; };
@@ -12956,10 +12960,20 @@ _ttsCancel() {
                 if (alive()) self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
               }, finDone, urlTimeout);
             } else if (skipUrl && zn == null) {
+              const _urlStart = Date.now();
               self._ttsTryJavaUrl(urls[0], vol, function() {
                 if (!alive()) return;
                 self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
-              }, finDone, Math.max(4000, Math.min(10000, 1500 + text.length * 500)));
+              }, function() {
+                if (!alive()) return;
+                if (self._ttsNativeGuard) { clearTimeout(self._ttsNativeGuard); self._ttsNativeGuard = null; }
+                if (Date.now() - _urlStart < 300) {
+                  try { self._ttsDiag.push('URL过短→原生'); } catch(e) {}
+                  self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
+                } else {
+                  finDone();
+                }
+              }, Math.max(4000, Math.min(10000, 1500 + text.length * 500)));
             } else {
               self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
             }
@@ -14600,4 +14614,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260827-1699';
+window.__SERVER_VER = '20260827-1700';
