@@ -703,6 +703,50 @@ const Storage = {
     const completed = (sessions || []).filter(s => s.completed);
     completed.forEach(s => { practiceSec += s.duration || 0; });
     const wrongs = this.getWrongQuestions(sid);
+
+    const subjects = ['english', 'chinese', 'math'];
+    const subjectNames = { english: '英语', chinese: '语文', math: '数学' };
+    const subjectStats = {};
+    subjects.forEach(sub => {
+      const subSessions = completed.filter(s => s.subject === sub);
+      let subSec = 0;
+      let subCorrect = 0, subWrong = 0, subTotal = 0;
+      let subStars = 0, subXp = 0;
+      const subTypes = {};
+      subSessions.forEach(s => {
+        subSec += s.duration || 0;
+        subCorrect += s.correctCount || 0;
+        subWrong += s.wrongCount || 0;
+        subTotal += s.totalItems || 0;
+        subStars += s.stars || 0;
+        subXp += s.xp || 0;
+        const t = s.type || 'other';
+        if (!subTypes[t]) subTypes[t] = { count: 0, correct: 0, wrong: 0, minutes: 0 };
+        subTypes[t].count++;
+        subTypes[t].correct += s.correctCount || 0;
+        subTypes[t].wrong += s.wrongCount || 0;
+        subTypes[t].minutes += Math.round((s.duration || 0) / 60);
+      });
+      subjectStats[sub] = {
+        name: subjectNames[sub],
+        sessions: subSessions.length,
+        minutes: Math.round(subSec / 60),
+        correct: subCorrect,
+        wrong: subWrong,
+        total: subTotal,
+        accuracy: subTotal > 0 ? Math.round((subCorrect / subTotal) * 100) : 0,
+        stars: subStars,
+        xp: subXp,
+        types: subTypes
+      };
+    });
+    const subWrongs = { english: 0, chinese: 0, math: 0 };
+    (wrongs || []).forEach(w => {
+      const sub = w.subject || 'english';
+      if (subWrongs.hasOwnProperty(sub)) subWrongs[sub]++;
+      else subWrongs.english++;
+    });
+
     return {
       deviceId: this.getDeviceId() || 'unknown',
       name: student.name || '未知学员',
@@ -718,7 +762,9 @@ const Storage = {
         lastPractice: progress.lastPracticeDate || '',
         minutes: Math.round(practiceSec / 60),
         wrongs: wrongs.length,
-        history: completed.length
+        history: completed.length,
+        subjects: subjectStats,
+        subjectWrongs: subWrongs
       }
     };
   },
@@ -863,6 +909,7 @@ const Storage = {
     const session = {
       id: Date.now(),
       type: type,
+      subject: meta.subject || 'english',
       unitId: unitId,
       unitTitle: unitTitle,
       gradeTitle: gradeTitle,
