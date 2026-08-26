@@ -1258,7 +1258,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       { k: 'listen', icon: '🎧', t: '听音选字', d: '听声音找对字' },
       { k: 'pinyin', icon: '✍️', t: '拼音训练营', d: '看字选对拼音' },
       { k: 'match', icon: '🧩', t: '识字配对', d: '字和意思连连看' },
-      { k: 'say', icon: '🎲', t: '组词造句秀', d: '动脑开口讲一讲' }
+      { k: 'say', icon: '🎲', t: '组词造句秀', d: '动脑开口讲一讲' },
+      { k: 'fly', icon: '🪰', t: '拍苍蝇', d: '听声音拍对字' }
     ];
     modes.forEach(m => {
       html += '<button class="dm-btn zhdm-btn" data-k="' + m.k + '" style="background:' + this._zhdColor(m.k) + '"><span class="dm-icon">' + m.icon + '</span><span class="dm-txt"><strong>' + m.t + '</strong><small>' + m.d + '</small></span></button>';
@@ -1276,13 +1277,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         else if (k === 'pinyin') this.startZhPyQuiz();
         else if (k === 'match') this.startMatchGame(null, words);
         else if (k === 'say') this.startZhSay();
+        else if (k === 'fly') this.startZhFly();
       });
     });
     this.updateTopBar();
   },
 
   _zhdColor(k) {
-    const map = { fc: '#FFF3E0', listen: '#E3F2FD', pinyin: '#E8F5E9', match: '#F3E5F5', say: '#FFEBEE' };
+    const map = { fc: '#FFF3E0', listen: '#E3F2FD', pinyin: '#E8F5E9', match: '#F3E5F5', say: '#FFEBEE', fly: '#FFFDE7' };
     return map[k] || '#FFF';
   },
 
@@ -2533,6 +2535,113 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     main.innerHTML = html;
   },
 
+  startZhFly() {
+    const words = this.zhDailyWords.filter(w => String(w.zi || '').trim());
+    if (!words.length) { this.renderZhDailyModes(); return; }
+    this.stopSpeaking();
+    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
+    this.activeSessionId = Storage.startSession('zhFly', 0, '每天必练·语文·拍苍蝇', '', { subject: 'chinese', totalItems: words.length });
+    this.zhFlyWords = words;
+    this.zhFlyIdx = 0;
+    this.zhFlyScore = 0;
+    this.zhFlyWrong = 0;
+    this.zhFlyLocked = false;
+    this.zhFlyTarget = null;
+    this.currentView = 'zhFly';
+    this._zhFlyRender();
+  },
+
+  _zhFlyRender() {
+    const self = this;
+    const main = document.getElementById('main-content');
+    const idx = this.zhFlyIdx;
+    const words = this.zhFlyWords;
+    if (idx >= words.length) { this._zhFlyDone(); return; }
+    const target = words[idx];
+    this.zhFlyTarget = target;
+    this.zhFlyLocked = false;
+    let html = '<div class="reading-container">';
+    html += '<button class="back-btn" onclick="App._zhFlyExit()">← 返回语文作业</button>';
+    html += '<h2 class="reading-title">🪰 拍苍蝇</h2>';
+    html += '<div class="zh-q-fb" style="min-height:28px">' + (idx + 1) + ' / ' + words.length + ' · 听读音，拍中正确的字！</div>';
+    html += '<div class="zh-fly-grid">';
+    const pool = words.slice();
+    pool.sort(function() { return Math.random() - 0.5; });
+    pool.forEach(function(w) {
+      const isTarget = w.zi === target.zi;
+      html += '<button class="zh-fly-btn" data-zi="' + w.zi + '" style="background:' + (isTarget ? '#FFF9C4' : '#FFF') + '">' + w.zi + '</button>';
+    });
+    html += '</div>';
+    html += '<div class="zh-q-score" style="margin-top:12px">✅ ' + this.zhFlyScore + ' · ❌ ' + this.zhFlyWrong + '</div>';
+    html += '</div>';
+    main.innerHTML = html;
+    document.querySelectorAll('.zh-fly-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (self.zhFlyLocked) return;
+        const zi = btn.dataset.zi;
+        if (zi === target.zi) {
+          self.zhFlyLocked = true;
+          self.zhFlyScore++;
+          btn.style.background = '#C8E6C9';
+          btn.style.borderColor = '#4CAF50';
+          const fb = document.querySelector('.zh-q-fb');
+          if (fb) fb.textContent = '✅ 太棒了！拍到了！';
+          self.zhFlyIdx++;
+          if (self.zhFlyTimer) { clearInterval(self.zhFlyTimer); self.zhFlyTimer = null; }
+          setTimeout(function() { self._zhFlyRender(); }, 700);
+        } else {
+          self.zhFlyWrong++;
+          btn.style.background = '#FFCDD2';
+          btn.style.borderColor = '#E53935';
+          self.zhFlyLocked = true;
+          setTimeout(function() {
+            btn.style.background = '#FFF';
+            btn.style.borderColor = '';
+            self.zhFlyLocked = false;
+          }, 500);
+        }
+      });
+    });
+    this._zhFlySpeak(target);
+  },
+
+  _zhFlySpeak(w) {
+    const self = this;
+    this._zhSpeakSeq(w.zi, w.pinyin, null, { skipUrl: true });
+    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
+    this.zhFlyTimer = setInterval(function() {
+      if (self.currentView !== 'zhFly') { clearInterval(self.zhFlyTimer); self.zhFlyTimer = null; return; }
+      self._zhSpeakSeq(self.zhFlyTarget.zi, self.zhFlyTarget.pinyin, null, { skipUrl: true });
+    }, 5000);
+  },
+
+  _zhFlyExit() {
+    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
+    this.renderZhDailyModes();
+  },
+
+  _zhFlyDone() {
+    if (this.zhFlyTimer) { clearInterval(this.zhFlyTimer); this.zhFlyTimer = null; }
+    const main = document.getElementById('main-content');
+    const t = this.zhFlyWords.length;
+    const score = this.zhFlyScore;
+    const pct = t ? Math.round(score / t * 100) : 0;
+    const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      Storage.endSession(this.activeSessionId, { correctCount: score, wrongCount: this.zhFlyWrong, totalItems: t, accuracy: pct, stars: stars, xp: score * 5 });
+      this.activeSessionId = null;
+      this._autoPushReport();
+    }
+    let html = '<div class="reading-container">';
+    html += '<button class="back-btn" onclick="App.renderZhDailyModes()">← 返回语文作业</button>';
+    html += '<h2 class="reading-title">🪰 拍苍蝇·结算</h2>';
+    html += '<div class="quiz-summary">拍中 ' + score + ' / ' + t + ' 个 · 正确率 ' + pct + '%'
+      + (pct >= 90 ? ' 🌟 手速真快！' : pct >= 60 ? ' 👍 继续加油！' : ' 😊 多练几次更棒！') + '</div>';
+    html += '<button class="continue-btn" style="margin-top:16px" onclick="App.renderZhDailyModes()">返回语文作业</button>';
+    html += '</div>';
+    main.innerHTML = html;
+  },
+
   zhDailyBack() {
     this.renderZhDailyModes();
   },
@@ -3344,7 +3453,7 @@ main.innerHTML = html;
         const sid = parseInt(btn.dataset.sid);
         const name = btn.dataset.name;
         const data = Storage.getStudentData(sid);
-        let sessions = data.sessions.filter(s => s.completed);
+        let sessions = data.sessions.filter(s => s.completed && s.type !== 'zhFly');
         let totalMin = 0; sessions.forEach(s => { totalMin += Math.max(1, Math.round((s.duration || 0) / 60)); });
         const previewDiv = document.getElementById('preview-' + sid);
         let wwc = 0; try { const p = Storage.getStudent(); Storage.loginStudent(sid); wwc = Storage.getWrongWords().length; if (p) Storage.loginStudent(p); else Storage.logout(); } catch (e) {}
@@ -7973,7 +8082,8 @@ _loadAnswers() {
     const typeStats = {};
     const dailyMap = {};
     const subjectStats = { english: { count: 0, min: 0, correct: 0, wrong: 0 }, chinese: { count: 0, min: 0, correct: 0, wrong: 0 }, math: { count: 0, min: 0, correct: 0, wrong: 0 } };
-    sessions.forEach(s => {
+    const exSessions = sessions.filter(function(s) { return s.type !== 'zhFly'; });
+    exSessions.forEach(s => {
       totalCorrect += s.correctCount || 0;
       const wt = s.wrongCount != null ? s.wrongCount : ((s.totalItems || 0) - (s.correctCount || 0));
       totalWrong += wt;
@@ -8012,7 +8122,7 @@ _loadAnswers() {
       { v: 'Lv.' + (data.progress.level || 1), l: '等级' },
       { v: totalMin + '分钟', l: '学习时长' },
       { v: completedUnits + '课', l: '完成课程' },
-      { v: sessions.length + '次', l: '练习次数' },
+      { v: exSessions.length + '次', l: '练习次数' },
       { v: (data.progress.streak || 0) + '天', l: '连续天数' },
       { v: accuracy + '%', l: '正确率' },
       { v: totalCorrect + '', l: '正确题数' },
@@ -8464,6 +8574,7 @@ var SUPER_PW = 'pj889988';
       if (self._zhQuizTimer) { clearTimeout(self._zhQuizTimer); self._zhQuizTimer = null; }
       if (self._zhPyTimer) { clearTimeout(self._zhPyTimer); self._zhPyTimer = null; }
       if (self._zhListenAutoTimer) { clearTimeout(self._zhListenAutoTimer); self._zhListenAutoTimer = null; }
+      if (self.zhFlyTimer) { clearInterval(self.zhFlyTimer); self.zhFlyTimer = null; }
       (self._exTimers || []).forEach(function(x){ try { clearTimeout(x); } catch(e) {} }); self._exTimers = [];
       if (self.readingTimer) { clearTimeout(self.readingTimer); self.readingTimer = null; }
       if (self.dcTimer) { clearTimeout(self.dcTimer); self.dcTimer = null; }
@@ -14427,4 +14538,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260826-1692';
+window.__SERVER_VER = '20260826-1694';
