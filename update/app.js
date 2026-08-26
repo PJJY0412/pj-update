@@ -3247,16 +3247,6 @@ main.innerHTML = html;
     html += '<div class="login-error" id="reg-ok" style="color:#2E7D32"></div>';
     html += '</div>';
 
-    const students = Storage.getStudents();
-    if (students.length > 0) {
-      html += '<h4 style="margin:16px 0 8px;color:var(--text-secondary)">已注册学员（' + students.length + ' 人）</h4>';
-      html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
-      students.forEach(s => {
-        html += '<span style="display:inline-block;padding:4px 10px;background:#E3F2FD;border-radius:14px;font-size:13px">' + this._h(s.name) + ' <span style="color:#888">' + (s.grade || '?') + '年级</span></span>';
-      });
-      html += '</div>';
-    }
-
     html += '</div>';
     container.innerHTML = html;
 
@@ -14357,4 +14347,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260826-1689';
+window.__SERVER_VER = '20260826-1690';
