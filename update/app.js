@@ -7375,6 +7375,18 @@ students.forEach(s => {
         html += '<span style="background:#fff;border:1px solid #E0E0E0;border-radius:12px;padding:3px 10px;font-size:12px">' + c[0] + '</span>';
       });
       html += '</div>';
+      const subNames2 = { english: '英语', chinese: '语文', math: '数学' };
+      const subColors2 = { english: '#00BFA5', chinese: '#FF9800', math: '#2196F3' };
+      const subjects = st.subjects || {};
+      const subKeys = Object.keys(subNames2).filter(k => subjects[k] && subjects[k].sessions > 0);
+      if (subKeys.length > 0) {
+        html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">';
+        subKeys.forEach(k => {
+          const ss = subjects[k];
+          html += '<span style="background:' + subColors2[k] + ';color:#fff;border-radius:10px;padding:2px 8px;font-size:11px">' + subNames2[k] + ' ' + ss.sessions + '次 · ' + ss.minutes + '分 · 正确率' + ss.accuracy + '%</span>';
+        });
+        html += '</div>';
+      }
       html += '<div style="margin-top:8px"><button class="admin-gen-btn" style="width:100%" data-rep-arch="' + this._h(r.deviceId) + '">📥 评分归档（写入学情报告并清除本次上报）</button></div>';
       html += '</div>';
     });
@@ -7925,12 +7937,13 @@ _loadAnswers() {
     wrongWordCount = wrongWordCount || 0;
     const canvas = document.createElement('canvas');
     canvas.width = 600;
-    canvas.height = 1080;
+    canvas.height = 1180;
     const ctx = canvas.getContext('2d');
 
     let totalCorrect = 0, totalWrong = 0;
     const typeStats = {};
     const dailyMap = {};
+    const subjectStats = { english: { count: 0, min: 0, correct: 0, wrong: 0 }, chinese: { count: 0, min: 0, correct: 0, wrong: 0 }, math: { count: 0, min: 0, correct: 0, wrong: 0 } };
     sessions.forEach(s => {
       totalCorrect += s.correctCount || 0;
       const wt = s.wrongCount != null ? s.wrongCount : ((s.totalItems || 0) - (s.correctCount || 0));
@@ -7938,6 +7951,13 @@ _loadAnswers() {
       const t = s.type || 'exercise';
       if (!typeStats[t]) typeStats[t] = { count: 0, min: 0 };
       typeStats[t].count++; typeStats[t].min += Math.max(1, Math.round((s.duration || 0) / 60));
+      const sub = s.subject || 'english';
+      if (subjectStats[sub]) {
+        subjectStats[sub].count++;
+        subjectStats[sub].min += Math.max(1, Math.round((s.duration || 0) / 60));
+        subjectStats[sub].correct += s.correctCount || 0;
+        subjectStats[sub].wrong += wt;
+      }
       const dk = new Date(s.startTime).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
       if (!dailyMap[dk]) dailyMap[dk] = 0;
       dailyMap[dk] += Math.max(1, Math.round((s.duration || 0) / 60));
@@ -7989,7 +8009,32 @@ _loadAnswers() {
       ctx.fillText(item.l, x + cw / 2, y + 66);
     });
 
-    const ty = sy + 4 * (ch + gy) + 20;
+    let ty = sy + 4 * (ch + gy) + 20;
+
+    const subNames = { english: '英语', chinese: '语文', math: '数学' };
+    const subColors = { english: '#00BFA5', chinese: '#FF9800', math: '#2196F3' };
+    const activeSubs = Object.keys(subjectStats).filter(k => subjectStats[k].count > 0);
+    if (activeSubs.length > 0) {
+      ctx.fillStyle = '#37474F';
+      ctx.font = 'bold 19px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('学科学习', 24, ty);
+      ty += 27;
+      activeSubs.forEach(k => {
+        const ss = subjectStats[k];
+        const acc = (ss.correct + ss.wrong) > 0 ? Math.round(ss.correct / (ss.correct + ss.wrong) * 100) : 0;
+        ctx.fillStyle = subColors[k] || '#00BFA5';
+        roundRect(ctx, 24, ty - 13, 552, 28, 8);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 16px "PingFang SC","Microsoft YaHei",sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(subNames[k] + '  ' + ss.count + '次 · ' + ss.min + '分钟 · 正确率' + acc + '%', 36, ty + 5);
+        ty += 36;
+      });
+      ty += 8;
+    }
+
     ctx.fillStyle = '#37474F';
     ctx.font = 'bold 19px "PingFang SC","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'left';
@@ -11385,6 +11430,7 @@ this.currentView = 'dictation';
     const ui = this.getUnitInfo(unitId);
     if (ui.unitTitle) {
       this.activeSessionId = Storage.startSession('reading', unitId, ui.unitTitle, ui.gradeTitle, {
+        subject: this.currentSubject,
         totalItems: passage.sentences.length
       });
     }
@@ -11616,6 +11662,7 @@ this.currentView = 'dictation';
     const ui = this.getUnitInfo(unitId);
     if (ui.unitTitle) {
       this.activeSessionId = Storage.startSession('flashcard', unitId, ui.unitTitle, ui.gradeTitle, {
+        subject: this.currentSubject,
         totalItems: this.fcWords.length
       });
     }
@@ -12053,6 +12100,7 @@ this.currentView = 'dictation';
     const ui = this.getUnitInfo(unitId);
     if (ui.unitTitle) {
       this.activeSessionId = Storage.startSession(exType, unitId, ui.unitTitle, ui.gradeTitle, {
+        subject: this.currentSubject,
         totalItems: words.length
       });
     }
@@ -12073,6 +12121,7 @@ this.currentView = 'dictation';
     const ui = this.getUnitInfo(unitId);
     if (ui.unitTitle) {
       this.activeSessionId = Storage.startSession('write', unitId, ui.unitTitle, ui.gradeTitle, {
+        subject: this.currentSubject,
         totalItems: words.length
       });
     }
@@ -12206,6 +12255,7 @@ this.currentView = 'dictation';
     const ui = this.getUnitInfo(DAILY_UNIT_ID);
     if (ui.unitTitle) {
       this.activeSessionId = Storage.startSession('write', DAILY_UNIT_ID, ui.unitTitle, ui.gradeTitle, {
+        subject: this.currentSubject,
         totalItems: wrongs.length
       });
     }
@@ -12225,6 +12275,7 @@ this.currentView = 'dictation';
     const ui = this.getUnitInfo(unitId);
     if (ui.unitTitle) {
       this.activeSessionId = Storage.startSession('exercise', unitId, ui.unitTitle, ui.gradeTitle, {
+        subject: this.currentSubject,
         totalItems: ui.totalWords
       });
     }
@@ -13317,6 +13368,7 @@ _ttsCancel() {
     this.hearts = 5;
 
     this.activeSessionId = Storage.startSession('review', 0, '错题复习', '', {
+      subject: this.currentSubject,
       totalItems: this.reviewTotal
     });
 
@@ -14347,4 +14399,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260826-1690';
+window.__SERVER_VER = '20260826-1691';
