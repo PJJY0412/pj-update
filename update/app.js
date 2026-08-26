@@ -3096,7 +3096,7 @@ main.innerHTML = html;
     html += '<h2 class="admin-title">🔧 管理后台</h2>';
 
     html += '<div class="admin-tabs">';
-    html += '<button class="admin-tab active" id="atab-codes">🎫 邀请码</button>';
+    html += '<button class="admin-tab active" id="atab-codes">🎓 学员注册</button>';
     html += '<button class="admin-tab" id="atab-students">👥 学员汇总</button>';
     html += '<button class="admin-tab" id="atab-inactive">⚠️ 未练习</button>';
     html += '<button class="admin-tab" id="atab-homework">📝 布置作业</button>';
@@ -3233,24 +3233,26 @@ main.innerHTML = html;
 
   _renderAdminCodes() {
     const container = document.getElementById('admin-tab-content');
-    const codes = Storage.getInviteCodes();
-    const unused = codes.filter(c => !c.used);
-    const used = codes.filter(c => c.used);
 
     let html = '<div class="admin-section">';
-    html += '<div class="admin-actions">';
-    html += '<button class="admin-gen-btn" id="gen-1">生成 1 个</button>';
-    html += '<button class="admin-gen-btn" id="gen-5">生成 5 个</button>';
-    html += '<button class="admin-gen-btn" id="gen-10">生成 10 个</button>';
+    html += '<h3 style="margin:0 0 12px;color:var(--primary)">学员注册</h3>';
+    html += '<p style="margin:0 0 12px;font-size:13px;color:var(--text-light)">在此为新学员注册账号，注册后学员即可在登录页输入姓名登录。</p>';
+    html += '<div class="register-form-v">';
+    html += '<input type="text" class="login-input" id="reg-name" placeholder="学员姓名" maxlength="12" autocomplete="off">';
+    html += '<select class="login-input" id="reg-grade" style="appearance:auto;-webkit-appearance:auto">';
+    for (var g = 1; g <= 6; g++) html += '<option value="' + g + '">' + g + ' 年级</option>';
+    html += '</select>';
+    html += '<button class="reg-btn" id="reg-btn">注 册</button>';
+    html += '<div class="login-error" id="reg-error"></div>';
+    html += '<div class="login-error" id="reg-ok" style="color:#2E7D32"></div>';
     html += '</div>';
 
-    html += '<p style="margin:8px 0;font-size:13px;color:var(--text-light)">可用：<strong>' + unused.length + '</strong> · 已用：' + used.length + '</p>';
-
-    if (unused.length > 0) {
-      html += '<h4 style="margin:12px 0 6px;color:var(--primary)">可用邀请码</h4>';
-      html += '<div class="code-list">';
-      unused.forEach(c => {
-        html += '<div class="code-item"><span class="code-val">' + this._h(c.code) + '</span><button class="code-copy-btn" data-code="' + this._h(c.code) + '">📋</button><button class="code-del-btn" data-code="' + this._h(c.code) + '">✕</button></div>';
+    const students = Storage.getStudents();
+    if (students.length > 0) {
+      html += '<h4 style="margin:16px 0 8px;color:var(--text-secondary)">已注册学员（' + students.length + ' 人）</h4>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+      students.forEach(s => {
+        html += '<span style="display:inline-block;padding:4px 10px;background:#E3F2FD;border-radius:14px;font-size:13px">' + this._h(s.name) + ' <span style="color:#888">' + (s.grade || '?') + '年级</span></span>';
       });
       html += '</div>';
     }
@@ -3258,35 +3260,8 @@ main.innerHTML = html;
     html += '</div>';
     container.innerHTML = html;
 
-    document.getElementById('gen-1').addEventListener('click', () => { Storage.generateInviteCodes(1); this._renderAdminCodes(); });
-    document.getElementById('gen-5').addEventListener('click', () => { Storage.generateInviteCodes(5); this._renderAdminCodes(); });
-    document.getElementById('gen-10').addEventListener('click', () => { Storage.generateInviteCodes(10); this._renderAdminCodes(); });
-
-    document.querySelectorAll('.code-del-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        Storage.deleteInviteCode(btn.dataset.code);
-        this._renderAdminCodes();
-      });
-    });
-
-    document.querySelectorAll('.code-copy-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        navigator.clipboard.writeText(btn.dataset.code).then(() => {
-          btn.textContent = '✓';
-          setTimeout(() => { btn.textContent = '📋'; }, 1500);
-        }).catch(() => {
-          const input = document.createElement('input');
-          input.value = btn.dataset.code;
-          document.body.appendChild(input);
-          input.select();
-          document.execCommand('copy');
-          document.body.removeChild(input);
-          btn.textContent = '✓';
-          setTimeout(() => { btn.textContent = '📋'; }, 1500);
-        });
-      });
-    });
+    document.getElementById('reg-btn').addEventListener('click', () => this._regBtn());
+    document.getElementById('reg-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') this._regBtn(); });
   },
 
   _renderAdminStudents(filterPeriod) {
@@ -8185,16 +8160,6 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
     html += '<button class="login-btn" id="login-btn">登 录</button>';
     html += '<div class="login-error" id="login-error"></div>';
     html += '</div>';
-    html += '<div class="login-divider"><span>新学员注册</span></div>';
-    html += '<div class="register-form-v">';
-    html += '<input type="text" class="login-input" id="reg-name" placeholder="请输入姓名" maxlength="12" autocomplete="off">';
-    html += '<select class="login-input" id="reg-grade" style="appearance:auto;-webkit-appearance:auto">';
-    for (var g = 1; g <= 6; g++) html += '<option value="' + g + '">' + g + ' 年级</option>';
-    html += '</select>';
-    html += '<input type="text" class="login-input" id="reg-code" placeholder="邀请码" maxlength="12" autocomplete="off">';
-    html += '<button class="reg-btn" id="reg-btn">注 册</button>';
-    html += '<div class="login-error" id="reg-error"></div>';
-    html += '</div>';
     html += '<div class="login-divider"><span>后台管理</span></div>';
     html += '<div class="login-form">';
     html += '<input type="password" class="login-input" id="admin-password" placeholder="管理员密码" maxlength="20" enterkeyhint="go">';
@@ -8227,7 +8192,6 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
       if (el) el.addEventListener('click', function() { try { fn(); } catch(e) {} });
     };
     bindBtn('login-btn', function() { App._loginBtn(); });
-    bindBtn('reg-btn', function() { App._regBtn(); });
     bindBtn('admin-btn', function() { App._adminBtn(); });
     bindBtn('unlock-btn', function() { App._activate(); });
     bindBtn('login-exit-btn', function() { App._exitApp(); });
@@ -8272,7 +8236,6 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
       if (e.key !== 'Enter') return;
       var id = e.target.id;
       if (id === 'admin-password') { var b = document.getElementById('admin-btn'); if (b) b.click(); }
-      else if (id === 'reg-name' || id === 'reg-code') { var b = document.getElementById('reg-btn'); if (b) b.click(); }
       else if (id === 'login-name') { var b = document.getElementById('login-btn'); if (b) b.click(); }
     });
   },
@@ -8319,25 +8282,21 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
   _regBtn() {
     try {
       var name = document.getElementById('reg-name').value.trim();
-      var code = document.getElementById('reg-code').value.trim().toUpperCase();
       var grade = parseInt(document.getElementById('reg-grade').value) || 1;
-      console.log('_regBtn: name="' + name + '" code="' + code + '" grade=' + grade);
+      console.log('_regBtn: name="' + name + '" grade=' + grade);
       if (!name) { document.getElementById('reg-error').textContent = '请输入姓名'; return; }
-      if (!code) { document.getElementById('reg-error').textContent = '请输入邀请码'; return; }
-      if (!Storage.checkInviteCode(code)) {
-        document.getElementById('reg-error').textContent = '邀请码无效或已被使用';
-        return;
-      }
       if (Storage.findStudent(name)) {
         document.getElementById('reg-error').textContent = '该姓名已注册';
         return;
       }
-      Storage.useInviteCode(code, name);
       var student = Storage.addStudent(name, grade);
       console.log('_regBtn: addStudent returned ' + (student ? student.id + ' ' + student.name : 'null'));
       if (student) {
-        this.loginStudent(student.id);
         this._pushStudentsToHost();
+        document.getElementById('reg-error').textContent = '';
+        var ok = document.getElementById('reg-ok');
+        if (ok) ok.textContent = '✓ 已注册：' + name + '（' + grade + '年级），请在登录页登录';
+        document.getElementById('reg-name').value = '';
       } else {
         document.getElementById('reg-error').textContent = '注册失败，请重试';
       }
@@ -14398,4 +14357,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260826-1688';
+window.__SERVER_VER = '20260826-1689';
