@@ -7033,27 +7033,12 @@ students.forEach(s => {
         b += '<button class="login-btn" id="pub-target-send" style="width:100%">📤 发送到学员</button>';
       } else {
         b += '<input type="text" class="login-input" id="pub-target-folder-name" placeholder="文件夹名称，如：期中复习 / 三年级专项" style="margin-bottom:6px" autocomplete="off">';
-        b += '<div style="display:flex;gap:8px;margin-bottom:8px">';
-        b += '<button class="admin-gen-btn" data-pfmode="lan" style="flex:1;background:' + (Storage.getTransportMode() === 'lan' ? 'var(--primary);color:#fff' : '#fff') + '">🏠 同一网络</button>';
-        b += '<button class="admin-gen-btn" data-pfmode="cloud" style="flex:1;background:' + (Storage.getTransportMode() === 'cloud' ? 'var(--primary);color:#fff' : '#fff') + '">☁️ 跨网络</button>';
-        b += '</div>';
-        b += '<div id="pub-target-folder-lan"' + (Storage.getTransportMode() === 'cloud' ? ' style="display:none"' : '') + '>';
         b += '<input type="text" class="login-input" id="pub-target-folder-host" placeholder="电脑 IP，如 192.168.1.100" value="' + this._h(this._getSavedHost()) + '" style="margin-bottom:6px" autocomplete="off">';
         b += '<div style="font-size:11px;color:var(--text-light);margin-bottom:6px">电脑需先启动"错题接收器"，错题将存入电脑"文件夹名/年级"目录</div>';
-        b += '</div>';
-        b += '<div id="pub-target-folder-cloud"' + (Storage.getTransportMode() === 'lan' ? ' style="display:none"' : '') + '>';
-        b += '<div style="font-size:11px;color:var(--text-light);margin-bottom:6px">走云端，电脑端自动接收存入"文件夹名/年级"目录</div>';
-        b += '</div>';
         b += '<button class="login-btn" id="pub-target-send" style="width:100%">📤 发到电脑文件夹</button>';
       }
       body.innerHTML = b;
       this._bindHostInput('pub-target-folder-host');
-      body.querySelectorAll('[data-pfmode]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          Storage.setTransportMode(btn.dataset.pfmode);
-          renderBody('folder');
-        });
-      });
       const sendBtn = document.getElementById('pub-target-send');
       if (sendBtn) sendBtn.addEventListener('click', () => {
         if (mode === 'student') {
@@ -14610,4 +14595,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '1701';
+window.__SERVER_VER = '1702';
