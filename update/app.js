@@ -2722,6 +2722,12 @@ main.innerHTML = html;
       streakDays = (prog && prog.streak) || 0;
     } catch (e) {}
 
+    const accCount = this._accAccCount();
+    const accDays = this._accAccDayCount();
+    const accAll = this._accAccAllWords();
+    const accDue = this._accAccDueWords();
+    const accLv = this._accAccMeta().accum.lv;
+
     let freeHtml = '';
     if (freeBatch.length) {
       freeHtml += '<div style="font-size:14px;font-weight:700;margin-bottom:8px">🎈 自由练习 · 巩固这 ' + freeBatch.length + ' 词</div>';
@@ -2738,9 +2744,32 @@ main.innerHTML = html;
     html += '<h2 class="course-title">📅 日积月累</h2>';
     html += '<div style="padding:0 16px">';
     html += '<div style="display:flex;gap:8px;margin-bottom:14px">';
-    html += '<div style="flex:1;background:#FFF8E1;border:1px solid #FFE082;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#5D4037"><div style="font-size:20px;font-weight:700">' + Math.min(dp.cursor, words.length) + '/' + words.length + '</div>已积累</div>';
+    html += '<div style="flex:1;background:#E3F2FD;border:1px solid #90CAF9;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#0D47A1"><div style="font-size:20px;font-weight:700">' + Math.min(dp.cursor, words.length) + '/' + words.length + '</div>今日进度</div>';
+    html += '<div style="flex:1;background:#FFF8E1;border:1px solid #FFE082;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#5D4037"><div style="font-size:20px;font-weight:700">' + accCount + '</div>已积累<br>共 ' + accDays + ' 天</div>';
     html += '<div style="flex:1;background:' + (streakDays > 0 ? '#FFE0B2' : '#F5F7FA') + ';border:1px solid ' + (streakDays > 0 ? '#FFB74D' : '#E0E0E0') + ';border-radius:10px;padding:10px;text-align:center;font-size:12px;color:' + (streakDays > 0 ? '#E65100' : 'var(--text-light)') + '"><div style="font-size:20px;font-weight:700">' + streakDays + '🔥</div>连续学习</div>';
     html += '</div>';
+
+    if (accCount > 0) {
+      html += '<div style="background:#F1F8E9;border:1px solid #C5E1A5;border-radius:12px;padding:12px;margin-bottom:14px">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+      html += '<div style="font-size:14px;font-weight:700;color:#33691E">📚 我的积累墙 <small style="font-weight:400;color:#689F38">已累积 ' + accCount + ' 词 · ' + accDays + ' 天</small></div>';
+      if (accDue.length) html += '<button class="daily-mode-btn" data-accdue="1" style="font-size:12px;padding:5px 10px">⏰ 到期复习 ' + accDue.length + '</button>';
+      html += '</div>';
+      html += '<div style="display:flex;flex-wrap:wrap">';
+      (accAll.slice(0, 30)).forEach(w => {
+        const id = String(w.en || w.zi).toLowerCase().trim();
+        const ripe = (accLv[id] || 0) >= MEMORY_INTERVALS.length;
+        html += '<div class="acc-wall-word" data-spk="' + this._h(String(w.en || w.zi)).replace(/"/g, '&quot;') + '" style="flex:0 0 33.33%;padding:5px 4px;text-align:center;cursor:pointer">';
+        html += '<div style="font-size:16px;font-weight:700;color:' + (ripe ? '#F57F17' : '#33691E') + '">' + this._h(w.en || w.zi) + '</div>';
+        html += '<div style="font-size:10px;color:#8BC34A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ripe ? '🍎 已毕业' : '复习 ' + (accLv[id] || 0) + '/' + MEMORY_INTERVALS.length) + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+      html += '<button class="daily-mode-btn" data-accall="1" style="width:100%;margin-top:8px">🔄 复习全部积累 ' + accCount + ' 词</button>';
+      html += '</div>';
+    } else {
+      html += '<div style="background:#F1F8E9;border:1px solid #C5E1A5;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#689F38">🧱 还没有积累的单词，学完今日新词就会开始日积月累，越积越多！</div>';
+    }
 
     if (doneToday) {
       html += '<div style="background:#FFF8E1;border:1px solid #FFE082;border-radius:12px;padding:14px;margin-bottom:14px;text-align:center">';
@@ -2791,6 +2820,27 @@ main.innerHTML = html;
     });
     const backBtn = document.getElementById('acc-back-practice');
     if (backBtn) backBtn.addEventListener('click', () => this.renderDailyPractice());
+
+    main.querySelectorAll('.acc-wall-word').forEach(el => {
+      el.addEventListener('click', () => this.speakWord(el.dataset.spk));
+    });
+    const accAllBtn = main.querySelector('[data-accall]');
+    if (accAllBtn) accAllBtn.addEventListener('click', () => {
+      const list = this._accAccAllWords().filter(w => String(w.en || w.zi).trim());
+      if (!list.length) return;
+      const ids = list.map(w => String(w.en || w.zi).toLowerCase().trim()).filter(Boolean);
+      this._accFlow = false;
+      this._accStart(list, false, () => { this._accAccAdvance(ids); this.renderDailyAccumulate(); });
+    });
+    const accDueBtn = main.querySelector('[data-accdue]');
+    if (accDueBtn) accDueBtn.addEventListener('click', () => {
+      const list = this._accAccDueWords().filter(w => String(w.en || w.zi).trim());
+      if (!list.length) return;
+      const ids = list.map(w => String(w.en || w.zi).toLowerCase().trim()).filter(Boolean);
+      this._accFlow = false;
+      this._accStart(list, false, () => { this._accAccAdvance(ids); this.renderDailyAccumulate(); });
+    });
+
     this.updateTopBar();
   },
 
@@ -2803,6 +2853,75 @@ main.innerHTML = html;
     if (stars) dp.stars = stars;
     Storage.saveDailyProgress(this.currentStudent.id, dp);
     this.renderDailyAccumulate();
+  },
+
+  // ---- 日积月累：逐日积累数据模型（独立于记忆花园的 dp.lv/dp.due，避免冲突）----
+  _accAccMeta() {
+    const dp = Storage.getDailyProgress(this.currentStudent.id) || { date: '', cursor: 0 };
+    if (!dp.accum) dp.accum = { days: {}, list: [], lv: {}, due: {}, last: '' };
+    return dp;
+  },
+  _accAccSave(dp) {
+    Storage.saveDailyProgress(this.currentStudent.id, dp);
+  },
+  _accAccumulate(batch) {
+    // 学完当日新词后，把单词逐日累积进历史（日积月累的核心）
+    if (!batch || !batch.length) return;
+    const dp = this._accAccMeta();
+    const today = this._gardenDateStr(0);
+    if (!dp.accum.days[today]) dp.accum.days[today] = [];
+    const ids = batch.map(w => String(w.en || w.zi).toLowerCase().trim()).filter(Boolean);
+    ids.forEach(id => {
+      if (dp.accum.days[today].indexOf(id) < 0) dp.accum.days[today].push(id);
+      if (dp.accum.list.indexOf(id) < 0) dp.accum.list.push(id);
+      if (dp.accum.lv[id] === undefined) dp.accum.lv[id] = 0;
+      if (!dp.accum.due[id] || dp.accum.due[id] < today) dp.accum.due[id] = this._gardenDateStr(MEMORY_INTERVALS[0]);
+    });
+    dp.accum.last = today;
+    this._accAccSave(dp);
+  },
+  _accAccCount() {
+    const dp = this._accAccMeta();
+    return (dp.accum.list || []).length;
+  },
+  _accAccDayCount() {
+    const dp = this._accAccMeta();
+    return Object.keys(dp.accum.days || {}).length;
+  },
+  _accAccAllWords() {
+    const dp = this._accAccMeta();
+    const ids = dp.accum.list || [];
+    const all = this.getHomeworkWords(Storage.getHomework(this.currentStudent.id));
+    const out = [];
+    ids.forEach(id => {
+      const w = all.find(x => String(x.en || x.zi).toLowerCase().trim() === id);
+      out.push(w || { en: id, cn: '' });
+    });
+    return out;
+  },
+  _accAccDueWords() {
+    const dp = this._accAccMeta();
+    const today = this._gardenDateStr(0);
+    const dueIds = Object.keys(dp.accum.due || {}).filter(id => dp.accum.due[id] <= today);
+    const all = this.getHomeworkWords(Storage.getHomework(this.currentStudent.id));
+    const out = [];
+    dueIds.forEach(id => {
+      const w = all.find(x => String(x.en || x.zi).toLowerCase().trim() === id);
+      if (w) out.push(w);
+    });
+    return out;
+  },
+  _accAccAdvance(ids) {
+    if (!ids || !ids.length) return;
+    const dp = this._accAccMeta();
+    const today = this._gardenDateStr(0);
+    ids.forEach(id => {
+      const lv = (dp.accum.lv[id] || 0) + 1;
+      dp.accum.lv[id] = lv;
+      if (lv >= MEMORY_INTERVALS.length) delete dp.accum.due[id];
+      else dp.accum.due[id] = this._gardenDateStr(MEMORY_INTERVALS[lv]);
+    });
+    this._accAccSave(dp);
   },
 
   _accStart(words, isBatch, onDone) {
@@ -2996,12 +3115,26 @@ main.innerHTML = html;
       const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
     }
     if (arr.length < 2 && arr.length > 0) arr.push(arr[0]);
+    const qMode = mode || 'acc';
+    // 日积月累第 2 关：多题型混合（听音选词 / 看义选词 / 听音拼写随机轮换），打破单调；其余玩法保持听音选词
+    this._quizSub = arr.map((w, idx) => {
+      if (qMode !== 'acc') return 'hearChoose';
+      const hasCn = !!(w.cn && String(w.cn).trim());
+      const r = Math.random();
+      if (hasCn && r < 0.5) return 'chooseEN';
+      if (idx % 2 === 1 && r < 0.62) return 'hearSpell';
+      return 'hearChoose';
+    });
     this._quizWords = arr;
     this._quizIndex = 0;
     this._quizWrong = [];
     this._quizPool = pool || null;
-    this._quizMode = mode || 'acc';
+    this._quizMode = qMode;
     this._renderAccQuiz();
+  },
+
+  _quizSubLabel(so) {
+    return so === 'chooseEN' ? '看词义选英文' : so === 'hearSpell' ? '听音拼写' : '听音选词';
   },
 
   _renderAccQuiz() {
@@ -3020,24 +3153,39 @@ main.innerHTML = html;
     }
     opts.sort(function() { return Math.random() - 0.5; });
 
+    const sub = this._quizSub && this._quizSub[this._quizIndex] || 'hearChoose';
+    const isOption = sub !== 'hearSpell';
+    const cnText = (w.cn && String(w.cn).trim()) ? String(w.cn) : (String(w.zi || '').trim() || correct);
+
     let html = '<div class="fc-container">';
     html += '<button class="back-btn" onclick="App._accExit()">← 返回上一级</button>';
-    html += '<div class="fc-counter">第 2 关 · 听音选词 ' + (this._quizIndex + 1) + ' / ' + total + '</div>';
+    html += '<div class="fc-counter">第 2 关 · ' + this._quizSubLabel(sub) + ' ' + (this._quizIndex + 1) + ' / ' + total + '</div>';
     html += '<div class="fc-progress" style="max-width:340px;height:6px;background:#E0E0E0;border-radius:3px;margin:-6px auto 12px;overflow:hidden">';
     html += '<div style="height:100%;width:' + Math.round(((this._quizIndex + 1) / total) * 100) + '%;background:#FF9800"></div></div>';
     html += '<div class="fc-card" style="cursor:default;pointer-events:none">';
-    html += '<div class="fc-face" style="background:linear-gradient(135deg,#FFF3E0,#FFE0B2)"><span style="font-size:26px">🔊</span><small style="display:block;margin-top:10px;font-size:13px;opacity:.75">听发音，选出听到的单词</small></div>';
+    if (sub === 'chooseEN') {
+      html += '<div class="fc-face" style="background:linear-gradient(135deg,#E8F5E9,#C8E6C9)"><span style="font-size:22px">' + this._h(cnText) + '</span><small style="display:block;margin-top:10px;font-size:13px;opacity:.75">看词义，选出对应的英文单词</small></div>';
+    } else {
+      html += '<div class="fc-face" style="background:linear-gradient(135deg,#FFF3E0,#FFE0B2)"><span style="font-size:26px">🔊</span><small style="display:block;margin-top:10px;font-size:13px;opacity:.75">' + (sub === 'hearSpell' ? '听发音，拼出这个单词' : '听发音，选出听到的单词') + '</small></div>';
+    }
     html += '</div>';
     html += '<div style="text-align:center;margin-top:10px">';
     html += '<button class="speaker-btn" id="quiz-play" style="font-size:16px;padding:6px 16px;border-radius:8px">🔊 再听一遍</button>';
     html += '</div>';
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px">';
-    for (let i = 0; i < opts.length; i++) {
-      const o = opts[i];
-      const t = String(o.en || o.zi);
-      html += '<button class="quiz-opt" data-opt="' + this._h(t).replace(/"/g, '&quot;') + '" data-t="' + i + '" style="padding:16px 8px;font-size:17px;font-weight:600;border:1.5px solid #E0E0E0;border-radius:12px;background:#fff;color:var(--text)">' + this._h(t) + '</button>';
+    if (isOption) {
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px">';
+      for (let i = 0; i < opts.length; i++) {
+        const o = opts[i];
+        const t = String(o.en || o.zi);
+        html += '<button class="quiz-opt" data-opt="' + this._h(t).replace(/"/g, '&quot;') + '" data-t="' + i + '" style="padding:16px 8px;font-size:17px;font-weight:600;border:1.5px solid #E0E0E0;border-radius:12px;background:#fff;color:var(--text)">' + this._h(t) + '</button>';
+      }
+      html += '</div>';
+    } else {
+      html += '<div style="text-align:center;margin-top:14px">';
+      html += '<input type="text" id="quiz-spell-input" placeholder="在这里拼写..." style="width:calc(100% - 96px);max-width:260px;padding:12px 14px;font-size:18px;text-align:center;border:1.5px solid #90CAF9;border-radius:10px;outline:none" autocomplete="off" autocapitalize="off" spellcheck="false">';
+      html += '<button class="login-btn" id="quiz-spell-submit" style="width:80px;padding:12px 0;margin-left:8px">提交</button>';
+      html += '</div>';
     }
-    html += '</div>';
     html += '<div id="quiz-fb" style="text-align:center;margin-top:12px;min-height:24px;font-size:15px;font-weight:700"></div>';
     html += '</div>';
     main.innerHTML = html;
@@ -3045,9 +3193,19 @@ main.innerHTML = html;
     this.speakWord(correct);
     document.getElementById('quiz-play').addEventListener('click', () => this.speakWord(correct));
     const self = this;
-    document.querySelectorAll('.quiz-opt').forEach(b => {
-      b.addEventListener('click', () => self._quizAnswer(b));
-    });
+    if (isOption) {
+      document.querySelectorAll('.quiz-opt').forEach(b => {
+        b.addEventListener('click', () => self._quizAnswer(b));
+      });
+    } else {
+      const submit = document.getElementById('quiz-spell-submit');
+      if (submit) submit.addEventListener('click', () => self._quizSpellSubmit());
+      const inp = document.getElementById('quiz-spell-input');
+      if (inp) {
+        inp.addEventListener('keydown', function(e) { if (e.key === 'Enter') self._quizSpellSubmit(); });
+        setTimeout(function() { inp.focus(); }, 200);
+      }
+    }
   },
 
   _quizAnswer(btn) {
@@ -3072,6 +3230,28 @@ main.innerHTML = html;
     }
   },
 
+  _quizSpellSubmit() {
+    const inp = document.getElementById('quiz-spell-input');
+    if (!inp) return;
+    const val = String(inp.value || '').trim().toLowerCase();
+    if (!val) return;
+    inp.disabled = true;
+    const w = this._quizWords[this._quizIndex];
+    const correct = String(w.en || w.zi);
+    const fb = document.getElementById('quiz-fb');
+    if (val === correct.toLowerCase()) {
+      inp.style.borderColor = '#66BB6A'; inp.style.color = '#1B5E20';
+      fb.innerHTML = '✅ 拼写正确！'; fb.style.color = '#2E7D32';
+      setTimeout(() => this._quizNext(), 600);
+    } else {
+      inp.style.borderColor = '#E57373'; inp.style.color = '#B71C1C';
+      if (!this._quizWrong.some(x => String(x.en || x.zi) === correct)) this._quizWrong.push(w);
+      fb.innerHTML = '❌ 正确是：' + this._h(correct); fb.style.color = '#C62828';
+      this.speakWord(correct);
+      setTimeout(() => this._quizNext(), 1200);
+    }
+  },
+
   _quizNext() {
     this._quizIndex++;
     this._renderAccQuiz();
@@ -3092,7 +3272,7 @@ main.innerHTML = html;
     html += '<div style="background:#FFF8E1;border:1px solid #FFE082;border-radius:12px;padding:16px;margin-bottom:14px;text-align:center">';
     html += '<div style="font-size:34px">' + (stars >= 3 ? '🏆' : stars >= 2 ? '🌟' : '💪') + '</div>';
     html += '<div style="font-size:26px;letter-spacing:6px;color:#FFB300;margin-top:4px">' + '★'.repeat(stars) + '☆'.repeat(3 - stars) + '</div>';
-    html += '<div style="font-size:13px;color:#795548;margin-top:4px">' + (stars >= 3 ? '全部听对，太棒了！' : stars >= 2 ? '很棒！再巩固一下错词吧' : '继续加油，多听几遍一定行！') + '</div>';
+    html += '<div style="font-size:13px;color:#795548;margin-top:4px">' + (stars >= 3 ? '全部答对，太棒了！' : stars >= 2 ? '很棒！再巩固一下错词吧' : '继续加油，多听几遍一定行！') + '</div>';
     html += '</div>';
 
     if (wrong.length > 0) {
@@ -3130,6 +3310,7 @@ main.innerHTML = html;
   _accCouFinish() {
     this._accFlow = false;
     const totalAll = this._accTotalAll || (this._accWords ? this._accWords.length : 0);
+    this._accAccumulate(this._accWords);
     this._accFinishDaily(totalAll, this._accStars || 1);
   },
 
@@ -14597,4 +14778,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260827-1704';
+window.__SERVER_VER = '20260827-1705';
