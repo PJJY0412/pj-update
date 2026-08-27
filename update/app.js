@@ -8042,7 +8042,7 @@ _loadAnswers() {
     this._generateShareImage(data, sessions, totalMin);
   },
 
-  _generateShareImage(data, sessions, totalMin, displayName, previewDiv, wrongWordCount) {
+  _generateShareImage(data, sessions, totalMin, displayName, previewDiv, wrongWordCount, noWechatShare) {
     let name = displayName || (this.adminViewingStudent ? this.adminViewingStudent.name : '');
     if (!name) {
       try {
@@ -8209,7 +8209,7 @@ _loadAnswers() {
     var fileName = name + '_学情报告.png';
     var preview = previewDiv || document.getElementById('share-img-preview');
     if (!preview) return;
-    preview.innerHTML = '<a class="share-img-link" href="' + shareUrl + '" download="' + fileName + '" style="display:block;text-decoration:none"><img src="' + img + '" style="max-width:100%;border-radius:12px;box-shadow:var(--shadow);display:block"></a><div style="text-align:center;margin-top:8px"><button class="share-share-btn" style="padding:10px 24px;border:none;border-radius:10px;background:#07C160;color:#fff;font-size:15px;cursor:pointer">分享到微信</button></div><p id="share-status" style="margin:6px;font-size:12px;color:var(--text-light)"></p>';
+    preview.innerHTML = '<a class="share-img-link" href="' + shareUrl + '" download="' + fileName + '" style="display:block;text-decoration:none"><img src="' + img + '" style="max-width:100%;border-radius:12px;box-shadow:var(--shadow);display:block"></a>' + (noWechatShare ? '' : '<div style="text-align:center;margin-top:8px"><button class="share-share-btn" style="padding:10px 24px;border:none;border-radius:10px;background:#07C160;color:#fff;font-size:15px;cursor:pointer">分享到微信</button></div>') + '<p id="share-status" style="margin:6px;font-size:12px;color:var(--text-light)"></p>';
     var statusEl = preview.querySelector('#share-status');
     var st = function(t) { if (statusEl) { try { statusEl.textContent = t; } catch(e) {} } };
     var shareUrl = URL.createObjectURL(shareBlob);
@@ -8236,13 +8236,15 @@ _loadAnswers() {
       }
     }
 
-    preview.addEventListener('click', function(e) {
-      var t = e.target.closest('button');
-      if (!t || !t.classList.contains('share-share-btn')) return;
-      doShare();
-    });
+    if (!noWechatShare) {
+      preview.addEventListener('click', function(e) {
+        var t = e.target.closest('button');
+        if (!t || !t.classList.contains('share-share-btn')) return;
+        doShare();
+      });
 
-    setTimeout(function() { doShare(); }, 600);
+      setTimeout(function() { doShare(); }, 600);
+    }
 
     function roundRect(c, x, y, w, h, r) {
       c.beginPath();
@@ -14541,7 +14543,7 @@ const body = {
 
     if (completed.length > 0) {
       html += '<div style="text-align:center;margin:16px 0">';
-      html += '<button class="share-img-btn" id="report-share-btn" style="padding:10px 24px;border:none;border-radius:10px;background:var(--green);color:#fff;font-size:15px;cursor:pointer">📸 生成分享图</button>';
+      html += '<button class="share-img-btn" id="report-share-btn" style="padding:10px 24px;border:none;border-radius:10px;background:var(--green);color:#fff;font-size:15px;cursor:pointer">📸 学情报告</button>';
       html += '</div>';
       html += '<div id="share-img-preview" style="margin-top:12px"></div>';
     }
@@ -14564,7 +14566,7 @@ const body = {
         const studentList = Storage.getStudents();
         const self = studentList.find(st => st.id === sid);
         const wwc = Storage.getWrongWords().length;
-        this._generateShareImage(data, cs, totalMin, self ? self.name : '', null, wwc);
+        this._generateShareImage(data, cs, totalMin, self ? self.name : '', null, wwc, true);
       });
     }
 
@@ -14595,4 +14597,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '1702';
+window.__SERVER_VER = '20260827-1704';
