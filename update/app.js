@@ -6472,7 +6472,7 @@ const toId = s && !s.remote ? parseInt(s.id) : null;
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
     html += '<button class="admin-gen-btn" id="arch-sel-all" style="flex:1;min-width:90px">☑ 全选</button>';
     html += '<button class="admin-gen-btn" id="arch-sel-clear" style="flex:1;min-width:90px">清空选择</button>';
-    html += '<button class="login-btn" id="arch-send-sel" style="flex:2;min-width:140px">📤 发送所选到学员</button>';
+    html += '<button class="login-btn" id="arch-send-sel" style="flex:2;min-width:140px">📤 发送所选到学员或电脑文件夹</button>';
     html += '</div>';
     html += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">发送后学员平板在"📊 学习统计 → 📥 老师练习"即可收到</div>';
     html += '<div id="pub-send-target-panel"></div>';
@@ -6551,14 +6551,14 @@ const toId = s && !s.remote ? parseInt(s.id) : null;
         this._pubSel[el.dataset.awid] = { subject: el.dataset.asubj, text: txt, grade: el.dataset.agrade };
       });
       const sb = document.getElementById('arch-send-sel');
-      if (sb) sb.textContent = '📤 发送所选（' + Object.keys(this._pubSel).length + ' 题）到学员';
+      if (sb) sb.textContent = '📤 发送所选（' + Object.keys(this._pubSel).length + ' 题）到学员或电脑';
     });
     const clearBtn = document.getElementById('arch-sel-clear');
     if (clearBtn) clearBtn.addEventListener('click', () => {
       container.querySelectorAll('.arch-sel').forEach(el => { el.checked = false; });
       this._pubSel = {};
       const sb = document.getElementById('arch-send-sel');
-      if (sb) sb.textContent = '📤 发送所选到学员';
+      if (sb) sb.textContent = '📤 发送所选到学员或电脑文件夹';
     });
     container.querySelectorAll('.arch-sel').forEach(el => {
       el.addEventListener('change', () => {
@@ -6572,7 +6572,7 @@ const toId = s && !s.remote ? parseInt(s.id) : null;
           delete this._pubSel[wid];
         }
         const sb = document.getElementById('arch-send-sel');
-        if (sb) sb.textContent = '📤 发送所选' + (Object.keys(this._pubSel).length ? '（' + Object.keys(this._pubSel).length + ' 题）' : '') + '到学员';
+        if (sb) sb.textContent = '📤 发送所选' + (Object.keys(this._pubSel).length ? '（' + Object.keys(this._pubSel).length + ' 题）' : '') + '到学员或电脑';
       });
     });
     const sendSel = document.getElementById('arch-send-sel');
@@ -7081,13 +7081,11 @@ students.forEach(s => {
         }
         const folderName = document.getElementById('pub-target-folder-name').value.trim();
         if (!folderName) { alert('请输入文件夹名称'); return; }
-        const isCloud = Storage.getTransportMode() === 'cloud';
+        const hostInput = document.getElementById('pub-target-folder-host');
+        const host = hostInput ? hostInput.value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '') : '';
+        if (!host) { alert('请填写电脑 IP'); return; }
+        this._saveHost(host);
         const status = sendBtn;
-        if (!isCloud) {
-          const host = document.getElementById('pub-target-folder-host').value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-          if (!host) { alert('请填写电脑 IP'); return; }
-          this._saveHost(host);
-        }
         status.textContent = '正在发送...';
         const byGrade = {};
         sel.forEach(w => { (byGrade[w.grade] = byGrade[w.grade] || []).push(w); });
@@ -7095,8 +7093,6 @@ students.forEach(s => {
         const sendOne = (grade) => {
           const g = parseInt(grade, 10) || grade;
           const items = byGrade[grade].map(w => ({ subject: w.subject, text: w.text, createdAt: w.createdAt }));
-          if (isCloud) return self._cloudSend(folderName, items, g);
-          const host = this._getSavedHost();
           return self._lanPost('http://' + host + ':8899/upload', JSON.stringify({ student: folderName, grade: g, items: items, sentAt: new Date().toISOString() })).then(r => r.ok);
         };
         grades.reduce((p, grade, idx) => {
@@ -14614,4 +14610,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260827-1700';
+window.__SERVER_VER = '1701';
