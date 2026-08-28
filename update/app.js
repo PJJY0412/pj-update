@@ -1598,6 +1598,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _renderMathChallenge() {
     const ch = this._mathChallenge;
     const w = ch.words[ch.idx];
+    const item = this._mathChallengeItem(w, ch.words);
+    ch.curItem = item;
     const total = ch.words.length;
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App._mathChallengeCleanup();App.renderMathDailyModes()">← 返回数学作业</button>';
@@ -1608,9 +1610,9 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<span style="color:#E57373">🔥 连胜 <span id="math-ch-streak">' + ch.streak + '</span></span>';
     html += '</div>';
     html += '<div class="math-progress-bar" style="margin:4px 0;height:5px;background:#FFF3E0;border-radius:3px;overflow:hidden"><div id="math-ch-progress" style="width:' + Math.round((ch.idx)/total*100) + '%;height:100%;background:#FF9800;transition:width .3s"></div></div>';
-    const opts = this._mathGenOptions(w, ch.words);
+    const opts = item.opts;
     html += '<div class="math-card" style="text-align:center;padding:20px">';
-    html += '<div style="font-size:24px;font-weight:700;color:#0D47A1;margin-bottom:16px">' + this._h(w.en) + '</div>';
+    html += '<div style="font-size:24px;font-weight:700;color:#0D47A1;margin-bottom:16px">' + item.q + '</div>';
     html += '<div style="display:flex;flex-direction:column;gap:10px">';
     opts.forEach((o, i) => { html += '<button class="math-opt-btn" data-idx="' + i + '">' + o.label + '</button>'; });
     html += '</div>';
@@ -1633,7 +1635,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         btn.classList.add(correct ? 'math-opt-correct' : 'math-opt-wrong');
         if (!correct) opts.forEach((o, oi) => { if (o.isCorrect) document.querySelectorAll('.math-opt-btn')[oi].classList.add('math-opt-correct'); });
         const fb = document.getElementById('math-q-fb');
-        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (correct ? '#2E7D32' : '#C62828') + '">' + (correct ? '✅ +' + (1 + (ch.streak-1)*ch.config.streakBonus) + '分  连胜 ' + ch.streak : '❌ 正确答案：' + w.cn + '  连胜归零') + '</div>';
+        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (correct ? '#2E7D32' : '#C62828') + '">' + (correct ? '✅ +' + (1 + (ch.streak-1)*ch.config.streakBonus) + '分  连胜 ' + ch.streak : '❌ 正确答案：' + this._h(item.ans) + '  连胜归零') + '</div>';
         setTimeout(() => {
           ch.answered = false;
           if (ch.idx < total - 1) { ch.idx++; self._renderMathChallenge(); }
@@ -1656,7 +1658,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         if (!ch.answered) {
           ch.answered = true; ch.streak = 0;
           const fb = document.getElementById('math-q-fb');
-          if (fb) fb.innerHTML = '<div style="font-size:16px;color:#C62828">⏰ 时间到！正确答案：' + ch.words[ch.idx].cn + '</div>';
+          if (fb) fb.innerHTML = '<div style="font-size:16px;color:#C62828">⏰ 时间到！正确答案：' + this._h((ch.curItem && ch.curItem.ans) || ch.words[ch.idx].cn) + '</div>';
           setTimeout(() => { ch.answered = false; if (ch.idx < ch.words.length - 1) { ch.idx++; this._renderMathChallenge(); } else { this._mathChallengeFinish(); } }, 1500);
         }
       }
@@ -1720,14 +1722,16 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _renderMathQuiz() {
     const q = this._mathQuiz;
     const w = q.words[q.idx];
+    const item = this._mathChallengeItem(w, q.words);
+    q.curItem = item;
     const total = q.words.length;
-    const opts = this._mathGenOptions(w, q.words);
+    const opts = item.opts;
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
     html += '<h2 class="course-title">' + q.title + '</h2>';
     html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">第 ' + (q.idx + 1) + ' / ' + total + ' 题 · 得分 ' + q.score + '</div>';
     html += '<div class="math-card" style="text-align:center;padding:24px">';
-    html += '<div style="font-size:22px;font-weight:700;color:#0D47A1;margin-bottom:16px">' + this._h(w.en) + '</div>';
+    html += '<div style="font-size:22px;font-weight:700;color:#0D47A1;margin-bottom:16px">' + item.q + '</div>';
     html += '<div style="display:flex;flex-direction:column;gap:10px">';
     opts.forEach(function(o, i) {
       html += '<button class="math-opt-btn" data-idx="' + i + '">' + o.label + '</button>';
@@ -1750,7 +1754,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
           opts.forEach(function(o, oi) { if (o.isCorrect) document.querySelectorAll('.math-opt-btn')[oi].classList.add('math-opt-correct'); });
         }
         var fb = document.getElementById('math-q-fb');
-        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (correct ? '#2E7D32' : '#C62828') + '">' + (correct ? '✅ 正确！' : '❌ 正确答案：' + w.cn) + '</div>';
+        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (correct ? '#2E7D32' : '#C62828') + '">' + (correct ? '✅ 正确！' : '❌ 正确答案：' + this._h(item.ans)) + '</div>';
         setTimeout(function() {
           q.answered = false;
           if (q.idx < total - 1) { q.idx++; self._renderMathQuiz(); }
@@ -1760,28 +1764,47 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     });
   },
 
-  _mathGenOptions(correct, allWords) {
-    var correctAns = correct.cn;
-    var pool = [];
-    allWords.forEach(function(w) { if (w.en !== correct.en && w.cn) pool.push(w.cn); });
-    pool = pool.sort(function() { return Math.random() - 0.5; });
-    var opts = [{ label: correctAns, isCorrect: true }];
-    var seen = [correctAns];
-    while (opts.length < 4 && pool.length) {
-      var c = pool.pop();
-      if (seen.indexOf(c) >= 0) continue;
-      seen.push(c);
-      opts.push({ label: c, isCorrect: false });
+  // 按题型生成与题目匹配的候选答案（正确项=ans，干扰项与答案同为一种类型，杜绝"题目与候选答案不匹配"）
+  _mathWordKind(w) {
+    if (this._mathParseEn(w && w.en)) return /[\u4e00-\u9fff]/.test(String(w && w.cn || '')) ? 'koujue' : 'eqnum';
+    return 'concept';
+  },
+  _mathBuildOpts(ans, allWords, cur) {
+    const kind = this._mathWordKind(cur);
+    const opts = [{ label: ans, isCorrect: true }];
+    const seen = {}; seen[ans] = 1;
+    const pool = [];
+    allWords.forEach(w => {
+      if (w === cur) return;
+      if (this._mathWordKind(w) !== kind) return; // 只从同题型词里取干扰项
+      let o = null;
+      if (kind === 'eqnum') { const e = this._mathParseEn(w.en); o = String(e.result); }
+      else if (kind === 'koujue') { o = String(w.cn).trim(); }
+      else { o = String(w.cn || '').trim() || String(w.en || '').trim(); }
+      if (o && o !== ans && !seen[o]) { seen[o] = 1; pool.push(o); }
+    });
+    pool.sort(() => Math.random() - 0.5);
+    while (opts.length < 4 && pool.length) opts.push({ label: pool.pop(), isCorrect: false });
+    const fb = kind === 'eqnum' ? ['1','2','3','4','5','6','7','8','9','10','12','18','24','36','100']
+      : kind === 'koujue' ? ['一一得一','二二得四','三三得九','一二得二','一五得五','三七二十一','四四十六','五五二十五']
+      : ['长方形','正方形','三角形','圆','1米=100厘米','对边相等四个直角','三个角三条边','1元=10角'];
+    for (let i = 0; i < fb.length && opts.length < 4; i++) {
+      if (!seen[fb[i]]) { seen[fb[i]] = 1; opts.push({ label: fb[i], isCorrect: false }); }
     }
-    var fallbacks = ['1+1=2', '3-1=2', '5+0=5', '2×3=6', '8÷2=4'];
-    var fi = 0;
-    while (opts.length < 4) {
-      var fb = fallbacks[fi++];
-      if (seen.indexOf(fb) >= 0) continue;
-      seen.push(fb);
-      opts.push({ label: fb, isCorrect: false });
+    return this._shuffleArr(opts);
+  },
+  // 判定题型并生成匹配的题目/答案/候选项：算式词(含口诀)与概念词分开处理
+  _mathChallengeItem(w, allWords) {
+    const eq = this._mathParseEn(w.en);
+    if (eq) {
+      const isKoujue = /[\u4e00-\u9fff]/.test(String(w.cn || ''));
+      const q = this._h(eq.a) + ' ' + this._mathOpZh(eq.op) + ' ' + this._h(eq.b) + ' = ?';
+      const ans = isKoujue ? String(w.cn || '').trim() : String(eq.result);
+      return { q: q, ans: ans, kind: isKoujue ? 'koujue' : 'eqnum', opts: this._mathBuildOpts(ans, allWords, w) };
     }
-    return opts.sort(function() { return Math.random() - 0.5; });
+    const q = this._h(String(w.en || '').trim());
+    const ans = String(w.cn || '').trim() || String(w.en || '').trim();
+    return { q: q, ans: ans, kind: 'concept', opts: this._mathBuildOpts(ans, allWords, w) };
   },
 
   _renderMathQuizResult(data) {
@@ -1905,17 +1928,26 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   startMathCompare() {
     var words = this._getMathDailyWords();
     if (words.length < 2) { alert('至少需要2个知识点才能对比'); this.renderMathDailyModes(); return; }
-    var pairs = [], types = ['oper', 'unit', 'size', 'shape', 'priority'];
+    var self = this;
+    var pairs = [];
+    // 只对比算式词：乘除vs加减 →"哪个是乘除法"；得数不同 →"哪个得数更大"。二者都满足时优先乘除判定。
+    // 不引入概念词对比（无一致判据），从根源上保证"题目与候选答案匹配"。
     for (var i = 0; i < words.length - 1 && pairs.length < 10; i++) {
       for (var j = i + 1; j < words.length && pairs.length < 10; j++) {
-        if (words[i].cn && words[j].cn) {
-          var t = types[Math.floor(Math.random()*types.length)];
-          pairs.push([words[i], words[j], t]);
+        var a = words[i], b = words[j];
+        var ea = self._mathParseEn(a.en), eb = self._mathParseEn(b.en);
+        if (!ea || !eb) continue;
+        var aMul = ea.op === '×' || ea.op === '÷';
+        var bMul = eb.op === '×' || eb.op === '÷';
+        if (aMul !== bMul) {
+          pairs.push({ q: '下面哪个算式是<strong>乘除法</strong>？', a: a, b: b, correct: aMul ? 0 : 1, labelA: self._h(a.en), labelB: self._h(b.en) });
+        } else if (ea.result !== eb.result) {
+          pairs.push({ q: '下面哪个算式的<strong>得数更大</strong>？', a: a, b: b, correct: ea.result > eb.result ? 0 : 1, labelA: self._h(a.en), labelB: self._h(b.en) });
         }
       }
     }
-    if (!pairs.length) { alert('暂无法生成对比题'); this.renderMathDailyModes(); return; }
-    pairs = pairs.sort(function() { return Math.random() - 0.5; });
+    if (!pairs.length) { alert('本次暂无可对比的口算题，换个作业再试试'); this.renderMathDailyModes(); return; }
+    pairs = pairs.sort(function() { return Math.random() - 0.5; }).slice(0, 10);
     this.activeSessionId = Storage.startSession('mathCompare', 0, '每天必练·数学·对比辨析', '', { subject: 'math', totalItems: pairs.length });
     this._mathCmp = { pairs: pairs, idx: 0, score: 0, answered: false };
     this._renderMathCompare();
@@ -1923,32 +1955,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _renderMathCompare() {
     var st = this._mathCmp;
     var pair = st.pairs[st.idx];
-    var a = pair[0], b = pair[1], type = pair[2];
-    var correctIdx = 0, question = '', optA = '', optB = '';
-    switch (type) {
-      case 'oper':
-        correctIdx = a.en.includes('×') || a.en.includes('÷') ? 0 : 1;
-        question = '下面哪个是<strong>乘除法</strong>口诀？';
-        break;
-      case 'unit':
-        correctIdx = a.en.includes('=') || a.cn.includes('=') ? 0 : 1;
-        question = '下面哪个是<strong>单位换算</strong>公式？';
-        break;
-      case 'size':
-        var na = parseFloat(a.en.match(/\d+/)?.[0]||0), nb = parseFloat(b.en.match(/\d+/)?.[0]||0);
-        correctIdx = na > nb ? 0 : 1;
-        question = '下面哪个<strong>数值更大</strong>？';
-        break;
-      case 'shape':
-        correctIdx = a.cn.includes('角') || a.cn.includes('边') ? 0 : 1;
-        question = '下面描述的是<strong>图形特征</strong>的是？';
-        break;
-      default:
-        correctIdx = (a.en.includes('×') || a.en.includes('÷')) && !(b.en.includes('×') || b.en.includes('÷')) ? 0 : 1;
-        question = '下面哪个<strong>先算乘除后算加减</strong>？';
-    }
-    optA = this._h(a.en) + '：' + this._h(a.cn);
-    optB = this._h(b.en) + '：' + this._h(b.cn);
+    var question = pair.q, correctIdx = pair.correct;
+    var optA = pair.labelA, optB = pair.labelB;
     var total = st.pairs.length;
     var html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
@@ -4228,9 +4236,10 @@ main.innerHTML = html;
         e.stopPropagation();
         const sid = parseInt(btn.dataset.sid);
         const name = btn.dataset.name;
+        const grade = btn.dataset.grade || Storage.getCurrentGrade({ id: sid }) || '';
         if (confirm('确定要删除学员"' + name + '"及其所有学习数据吗？此操作不可恢复。')) {
           Storage.deleteStudent(sid);
-          this._pushStudentsToHost();
+          this._pushStudentsToHost([{ name: name, grade: grade }]);
           this._renderAdminStudents();
         }
       });
@@ -4291,7 +4300,7 @@ main.innerHTML = html;
     sessions.forEach(s => { const t = s.type || 'exercise'; typeCount[t] = (typeCount[t] || 0) + 1; });
 
     let html = '<div class="admin-student-card">';
-    html += '<div class="asc-header"><strong class="asc-name">' + this._h(d.student.name) + '</strong><span class="asc-date">' + Storage.getCurrentGrade(d.student) + '年级 · 注册：' + new Date(d.student.createdAt).toLocaleDateString('zh-CN') + '</span><button class="asc-del-btn" data-sid="' + d.student.id + '" data-name="' + this._h(d.student.name) + '">✕</button></div>';
+    html += '<div class="asc-header"><strong class="asc-name">' + this._h(d.student.name) + '</strong><span class="asc-date">' + Storage.getCurrentGrade(d.student) + '年级 · 注册：' + new Date(d.student.createdAt).toLocaleDateString('zh-CN') + '</span><button class="asc-del-btn" data-sid="' + d.student.id + '" data-name="' + this._h(d.student.name) + '" data-grade="' + Storage.getCurrentGrade(d.student) + '">✕</button></div>';
     html += '<div class="asc-grid">';
     html += '<div class="asc-item"><span class="asc-val">' + (d.progress.totalXP || 0) + '</span><span class="asc-lbl">得分</span></div>';
     html += '<div class="asc-item"><span class="asc-val">Lv.' + (d.progress.level || 1) + '</span><span class="asc-lbl">等级</span></div>';
@@ -5742,6 +5751,21 @@ const name = s2 ? s2.name : '';
 
   _subjName(subject) {
     return subject === 'english' ? '英语' : subject === 'chinese' ? '语文' : subject === 'math' ? '数学' : subject;
+  },
+
+  // 数学口算题显示完整算式：如题面 "7+5=" + 我的答案 "12" → "7+5=12"
+  _mathTaskFullEq(t) {
+    const s = String(t ? t.text : '').trim();
+    if (!s) return '';
+    if (this._mathParseEn(s)) return s; // 题面已是完整算式（含结果）
+    const ma = String(t ? t.myAnswer : '').trim();
+    if (!/[0-9]/.test(ma)) return s; // 学员未填数字答案，保持原题面
+    const base = s.replace(/=\s*\?*\s*$/, '').replace(/\s+$/, '');
+    if (base === s || base.length === 0) {
+      // 题面不含等号：直接补 "=答案"（仅当含四则运算符时）
+      return /[+\-×÷]/.test(s) ? s + '=' + ma : s;
+    }
+    return base + '=' + ma;
   },
 
   _generatePracticeItems(subject, text, grade) {
@@ -8054,16 +8078,19 @@ students.forEach(s => {
     });
   },
 
-  _pushStudentsToHost() {
+  _pushStudentsToHost(removedList) {
     try {
       const host = this._getSavedHost();
+      const removed = Array.isArray(removedList) ? removedList : [];
       const students = Storage.getStudents().map(s => ({
         name: s.name,
         grade: Storage.getCurrentGrade(s),
         createdAt: s.createdAt || ''
       }));
-      if (!students.length) return Promise.resolve();
-      const payload = JSON.stringify({ students: students });
+      if (!students.length && !removed.length) return Promise.resolve();
+      const payloadObj = { students: students };
+      if (removed.length) payloadObj.removed = removed;
+      const payload = JSON.stringify(payloadObj);
       // 先尝试局域网
       if (host) {
         return this._lanPost('http://' + host + ':8899/students', payload).catch(() => this._pushStudentsToCloud(payload));
@@ -14971,79 +14998,140 @@ _renderTeacherTasks() {
       list.innerHTML = '<div style="font-size:12px;color:var(--text-light);background:#F5F7FA;border-radius:10px;padding:12px">暂无老师下发的练习</div>';
       return;
     }
+    // 试卷区：待作答 / 重做的题目（整卷展示，一次性交卷）
+    const paperQ = tasks.filter(t => !t.done && !t.submitted && !t.graded);
+    // 已完成区：已答（批阅/待批）题目，按日期归档展示
+    const doneQ = tasks.filter(t => !paperQ.includes(t));
+
     let html = '<div style="border:1px solid #E0E0E0;border-radius:10px;overflow:hidden">';
-    html += '<div style="padding:8px 10px;background:#F5F7FA;font-size:13px;font-weight:700">📥 老师下发的练习（' + tasks.length + ' 题）</div>';
-    const byDate = {};
-    tasks.forEach(t => {
-      const d = new Date(t.sentAt).toLocaleDateString('zh-CN');
-      (byDate[d] = byDate[d] || []).push(t);
-    });
-    Object.keys(byDate).sort().reverse().forEach(d => {
-      html += '<div style="padding:6px 10px 2px;font-size:11px;color:var(--text-muted)">📅 ' + d + '</div>';
-      byDate[d].forEach(t => {
-        html += '<div class="asc-item" style="align-items:flex-start;padding:6px 10px"' + (t.done ? ' style="opacity:.6"' : '') + '>';
+
+    // ---- 试卷作答区 ----
+    if (paperQ.length) {
+      const filled = paperQ.filter(t => this._paperVal(t.id)).length;
+      html += '<div style="padding:8px 10px;background:#F5F7FA;font-size:13px;font-weight:700;border-bottom:1px solid #E0E0E0">📄 练习卷（共 ' + paperQ.length + ' 题）</div>';
+      html += '<div style="padding:4px 10px 8px">';
+      paperQ.forEach((t, idx) => {
+        html += '<div style="padding:8px 0;border-bottom:1px dashed #E0E0E0">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
         html += '<div style="flex:1">';
-        html += '<div style="font-size:12px;color:#8D6E63">[' + this._subjName(t.subject) + ']</div>';
-        html += '<div style="font-size:14px;white-space:pre-wrap">' + this._h(t.text) + '</div>';
-        if (t.note && !t.done) html += '<div style="font-size:11px;color:#1565C0;margin-top:2px">📘 ' + this._h(t.note) + '</div>';
-        if (t.graded) {
-          if (t.correct) {
-            html += '<div style="font-size:12px;margin-top:3px;color:#2E7D32">✅ 老师已批阅：正确' + (t.answer ? '（标准答案：' + this._h(String(t.answer)) + '）' : '') + '</div>';
-          } else {
-            html += '<div style="font-size:12px;margin-top:3px;color:#C62828">❌ 老师已批阅：错误' + (t.answer ? '（标准答案：' + this._h(String(t.answer)) + '）' : '') + '</div>';
+        html += '<span style="font-weight:700;color:#1565C0">' + (idx + 1) + '.</span> ';
+        html += '<span style="font-size:11px;color:#8D6E63">[' + this._subjName(t.subject) + ']</span> ';
+        html += '<span style="font-size:14px;white-space:pre-wrap">' + this._h(t.text) + '</span>';
+        if (t.note) html += '<div style="font-size:11px;color:#1565C0;margin-top:2px">📘 ' + this._h(t.note) + '</div>';
+        html += '</div>';
+        html += '<span style="color:#C62828;font-size:14px;cursor:pointer" title="删除此题" data-tdelp="' + this._h(t.id) + '">🗑</span>';
+        html += '</div>';
+        html += '<input type="' + (t.answer ? 'number' : 'text') + '" class="task-ans-in" data-pwid="' + this._h(t.id) + '" value="' + String(this._paperVal(t.id) || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '" placeholder="' + (t.answer ? '输入答案' : '输入答案或过程') + '" style="width:100%;border:1px solid #BDBDBD;border-radius:8px;padding:6px 8px;font-size:14px;margin-top:4px;box-sizing:border-box"' + (t.answer ? ' inputmode="decimal"' : '') + '>';
+        html += '</div>';
+      });
+      html += '</div>';
+      html += '<div style="padding:8px 10px;background:#F5F7FA;border-top:1px solid #E0E0E0">';
+      html += '<button class="admin-gen-btn" id="task-submit-all" style="width:100%;background:#1565C0;color:#fff;font-weight:700">📮 交卷（已填 ' + filled + ' / ' + paperQ.length + ' 题）</button>';
+      html += '<div style="font-size:11px;color:#8D6E63;text-align:center;margin-top:4px">请在每题输入答案后点「交卷」，一次提交全部已填题目</div>';
+      html += '</div>';
+    }
+
+    // ---- 已完成区（已答 / 已批阅）----
+    if (doneQ.length) {
+      const byDate = {};
+      doneQ.forEach(t => {
+        const d = new Date(t.sentAt).toLocaleDateString('zh-CN');
+        (byDate[d] = byDate[d] || []).push(t);
+      });
+      Object.keys(byDate).sort().reverse().forEach(d => {
+        html += '<div style="padding:8px 10px 2px;font-size:11px;color:var(--text-muted);background:#FAFAFA;border-top:1px solid #EEE">📅 ' + d + '</div>';
+        byDate[d].forEach(t => {
+          html += '<div class="asc-item" style="align-items:flex-start;padding:6px 10px"' + (t.done ? ' style="opacity:.6"' : '') + '>';
+          html += '<div style="flex:1">';
+          html += '<div style="font-size:12px;color:#8D6E63">[' + this._subjName(t.subject) + ']</div>';
+          html += '<div style="font-size:14px;white-space:pre-wrap">' + (t.subject === 'math' && t.graded ? this._h(this._mathTaskFullEq(t)) : this._h(t.text)) + '</div>';
+          if (t.note && !t.done) html += '<div style="font-size:11px;color:#1565C0;margin-top:2px">📘 ' + this._h(t.note) + '</div>';
+          if (t.graded) {
+            if (t.correct) {
+              html += '<div style="font-size:12px;margin-top:3px;color:#2E7D32">✅ 老师已批阅：正确' + (t.answer ? '（标准答案：' + this._h(String(t.answer)) + '）' : '') + '</div>';
+            } else {
+              html += '<div style="font-size:12px;margin-top:3px;color:#C62828">❌ 老师已批阅：错误' + (t.answer ? '（标准答案：' + this._h(String(t.answer)) + '）' : '') + '</div>';
+              html += '<div style="display:flex;gap:6px;margin-top:6px">';
+              html += '<button class="admin-gen-btn" data-tredo="' + this._h(t.id) + '" style="flex:1">🔁 重做此题</button>';
+              html += '</div>';
+            }
+          } else if (t.submitted) {
+            const hasC = t.correct !== undefined && t.correct !== null;
+            html += '<div style="font-size:12px;margin-top:3px;color:' + (hasC && !t.correct ? '#C62828' : '#2E7D32') + '">我的答案：' + this._h(String(t.myAnswer || '')) + (hasC ? (t.correct ? ' ✅ 正确' : ' ❌ 错误' + (t.answer ? '（标准答案：' + this._h(String(t.answer)) + '）' : '')) : '（已提交，待老师查看）') + '</div>';
             html += '<div style="display:flex;gap:6px;margin-top:6px">';
             html += '<button class="admin-gen-btn" data-tredo="' + this._h(t.id) + '" style="flex:1">🔁 重做此题</button>';
             html += '</div>';
           }
-        } else if (t.submitted) {
-          const hasC = t.correct !== undefined && t.correct !== null;
-          html += '<div style="font-size:12px;margin-top:3px;color:' + (hasC && !t.correct ? '#C62828' : '#2E7D32') + '">我的答案：' + this._h(String(t.myAnswer || '')) + (hasC ? (t.correct ? ' ✅ 正确' : ' ❌ 错误' + (t.answer ? '（标准答案：' + this._h(String(t.answer)) + '）' : '')) : '（已提交，待老师查看）') + '</div>';
-          html += '<div style="display:flex;gap:6px;margin-top:6px">';
-          html += '<button class="admin-gen-btn" data-tredo="' + this._h(t.id) + '" style="flex:1">🔁 重做此题</button>';
           html += '</div>';
-        } else if (t.answer) {
-          html += '<div style="display:flex;gap:6px;margin-top:6px">';
-          html += '<input type="number" class="task-ans-in" data-wid="' + this._h(t.id) + '" placeholder="输入答案" style="flex:1;border:1px solid #BDBDBD;border-radius:8px;padding:6px 8px;font-size:14px;min-width:0" inputmode="decimal">';
-          html += '<button class="admin-gen-btn" data-anss="' + this._h(t.id) + '" style="white-space:nowrap">提交</button>';
+          html += '<span style="color:#2E7D32;font-size:15px;cursor:pointer;margin-right:10px" title="重做此题" data-tredo="' + this._h(t.id) + '">🔁</span>';
+          html += '<span style="color:#C62828;font-size:14px;cursor:pointer" title="删除此题" data-tdel="' + this._h(t.id) + '">🗑</span>';
           html += '</div>';
-        } else {
-          html += '<div style="display:flex;gap:6px;margin-top:6px">';
-          html += '<input type="text" class="task-ans-in" data-wid="' + this._h(t.id) + '" placeholder="输入答案或过程后提交" style="flex:1;border:1px solid #BDBDBD;border-radius:8px;padding:6px 8px;font-size:14px;min-width:0">';
-          html += '<button class="admin-gen-btn" data-anss="' + this._h(t.id) + '" style="white-space:nowrap">提交</button>';
-          html += '</div>';
-        }
-        html += '</div>';
-        html += '<span style="color:#2E7D32;font-size:15px;cursor:pointer;margin-right:10px" title="重做此题" data-tredo="' + this._h(t.id) + '">🔁</span>';
-        html += '<span style="color:#C62828;font-size:14px;cursor:pointer" title="删除此题" data-tdel="' + this._h(t.id) + '">🗑</span>';
-        html += '</div>';
+        });
       });
-    });
+    }
     html += '</div>';
     list.innerHTML = html;
 
-    list.querySelectorAll('[data-anss]').forEach(el => {
-      el.addEventListener('click', () => {
-        const id = el.dataset.anss;
-        const inp = list.querySelector('.task-ans-in[data-wid="' + id + '"]');
-        const val = inp ? inp.value.trim() : '';
-        if (!val) { alert('请先输入答案'); return; }
-        const tasks2 = Storage.getTeacherTasks();
-        const t = tasks2.find(x => x.id === id);
-        if (!t) return;
-        t.myAnswer = val;
-        if (t.answer) {
-          const a = String(t.answer).trim();
-          const u = val.replace(/[,，]/g, '').replace(/%/g, '');
-          t.correct = String(a).replace(/%/g, '') === u.replace(/%/g, '') || Math.abs(parseFloat(a) - parseFloat(u)) < 0.001;
-        } else {
-          t.correct = undefined;
+    // 试卷区：输入框值暂存（供交卷计数 / 重渲染保留）
+    list.querySelectorAll('.task-ans-in[data-pwid]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        try { this._paperVal(inp.dataset.pwid, inp.value); } catch (e) {}
+      });
+      const saved = this._paperVal(inp.dataset.pwid);
+      if (saved !== null && saved !== undefined && String(saved) !== inp.value) inp.value = saved;
+      // 交卷按钮计数实时更新
+      inp.addEventListener('input', () => {
+        const btn2 = document.getElementById('task-submit-all');
+        if (btn2) {
+          const filled2 = list.querySelectorAll('.task-ans-in[data-pwid]').length
+            ? Array.prototype.filter.call(list.querySelectorAll('.task-ans-in[data-pwid]'), e => (e.value || '').trim().length > 0).length : 0;
+          btn2.textContent = '📮 交卷（已填 ' + filled2 + ' 题）';
         }
-        t.submitted = true;
-        this._publishAnswer(t);
-        this._markTaskSubmitted(id);
-        Storage.saveTeacherTasks(tasks2.filter(x => x.id !== id));
+      });
+    });
+
+    const subBtn = document.getElementById('task-submit-all');
+    if (subBtn) {
+      subBtn.addEventListener('click', () => {
+        const tasks2 = Storage.getTeacherTasks();
+        let submitted = 0;
+        const removeIds = [];
+        tasks2.forEach(t => {
+          if (t.done || t.submitted || t.graded) return;
+          const val = this._paperVal(t.id);
+          if (!val) return;
+          t.myAnswer = val;
+          if (t.answer) {
+            const a = String(t.answer).trim();
+            const u = val.replace(/[,，]/g, '').replace(/%/g, '');
+            t.correct = String(a).replace(/%/g, '') === u.replace(/%/g, '') || Math.abs(parseFloat(a) - parseFloat(u)) < 0.001;
+          } else {
+            t.correct = undefined;
+          }
+          t.submitted = true;
+          this._publishAnswer(t);
+          this._markTaskSubmitted(t.id);
+          removeIds.push(t.id);
+          submitted++;
+        });
+        removeIds.forEach(id => { try { delete this._paperIn[id]; } catch (e) {} });
+        Storage.saveTeacherTasks(tasks2.filter(x => removeIds.indexOf(x.id) < 0));
         this._renderTeacherTaskList(list);
-        alert('✅ 已上报老师，本题已从列表移除');
+        if (submitted > 0) {
+          // 需求2：交卷后直接删除已完成题目，不再弹提示；交卷成功的反馈轻量显示在待办角标
+          try { this._updateTaskBadge && this._updateTaskBadge(); } catch (e) {}
+        }
+      });
+    }
+
+    // 试卷区：删除某题（不弹确认，直接删除）
+    list.querySelectorAll('[data-tdelp]').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.tdelp;
+        this._markTaskDeleted(id);
+        try { delete this._paperIn[id]; } catch (e) {}
+        Storage.saveTeacherTasks(Storage.getTeacherTasks().filter(x => x.id !== id));
+        this._renderTeacherTaskList(list);
       });
     });
 
@@ -15069,6 +15157,14 @@ _renderTeacherTasks() {
         this._renderTeacherTaskList(list);
       });
     });
+  },
+
+  // 试卷区输入框值的暂存（key=任务id，value=输入值）
+  _paperIn: {},
+  _paperVal(id, val) {
+    if (arguments.length >= 2) { this._paperIn[id] = val; return val; }
+    const v = this._paperIn[id];
+    return (v === null || v === undefined) ? '' : String(v);
   },
 
   _publishAnswer(t) {
