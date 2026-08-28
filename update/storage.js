@@ -272,22 +272,50 @@ const Storage = {
     const existing = this.getStudents();
     const dict = {};
     existing.forEach(s => { if (s && s.name) dict[s.name] = s; });
-    list.forEach(s => { if (s && s.name) dict[s.name] = s; });
+    list.forEach(incoming => {
+      if (!incoming || !incoming.name) return;
+      const local = dict[incoming.name];
+      if (local) {
+        // 本地已有该学员：保留本地真实身份（id/年级/入学年/注册时间）以维持学习数据关联，仅补前端缺失字段
+        const keep = Object.assign({}, incoming);
+        keep.id = local.id;
+        if (local.grade != null) keep.grade = local.grade;
+        if (local.gradeStartYear != null) keep.gradeStartYear = local.gradeStartYear;
+        if (local.createdAt != null) keep.createdAt = local.createdAt;
+        dict[incoming.name] = keep;
+      } else {
+        dict[incoming.name] = incoming;
+      }
+    });
     const merged = Object.values(dict);
+    const prev = this._studentId;
+    this._studentId = null;
     this.save('students', merged);
+    this._studentId = prev;
     console.log('合并学员完成，共', merged.length, '人');
   },
 
   deleteStudent(id) {
     const prev = this._studentId;
     this._studentId = null;
-    const students = this.getStudents().filter(s => s.id !== id);
+    const targetId = String(id);
+    const students = this.getStudents().filter(s => String(s.id) !== targetId);
     this.save('students', students);
-    const keys = ['progress', 'sessions', 'learnedWords', 'lastStreakDate', 'homework', 'homework_zh', 'homework_math', 'daily', 'scanWorks', 'wrongQuestions'];
-    const oldId = id;
-    keys.forEach(k => {
-      localStorage.removeItem('vocab_s' + oldId + '_' + k);
-    });
+    // 1) 删除该学员所有按 id 隔离的本地键（学习进度/错题本/作业/每日/听写/扫描等，含历史遗留键）
+    const prefix = 'vocab_s' + targetId + '_';
+    const dropKeys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf(prefix) === 0) dropKeys.push(k);
+    }
+    dropKeys.forEach(k => localStorage.removeItem(k));
+    // 2) 从全局（跨学员、条目带 studentId）列表中剔除该学员记录
+    const cleanGlobal = (key) => {
+      const list = this.load(key, []);
+      const kept = list.filter(x => x && String(x.studentId) !== targetId);
+      if (kept.length !== list.length) this.save(key, kept);
+    };
+    ['weekWrongs', 'practiceExtra', 'practicePending', 'practiceArchive'].forEach(cleanGlobal);
     this._studentId = prev;
     this.exportBackup();
   },
@@ -964,21 +992,24 @@ const Storage = {
     return clean;
   },
 
-  addWrongWord(wordEn, wordCn, unitId, unitTitle) {
+  addWrongWord(wordEn, wordCn, unitId, unitTitle, subject) {
     wordEn = String(wordEn == null ? '' : wordEn).trim();
     wordCn = String(wordCn == null ? '' : wordCn).trim();
     if (!wordEn || !wordCn) return;
+    subject = subject == null || String(subject).trim() === '' ? 'english' : String(subject).trim();
     const list = this.getWrongWords();
     const existing = list.find(w => w.wordEn === wordEn);
     if (existing) {
       existing.missedCount = (existing.missedCount || 1) + 1;
       existing.lastMissed = new Date().toISOString();
+      if (subject !== 'english' || !existing.subject) existing.subject = subject;
     } else {
       list.push({
         wordEn: wordEn,
         wordCn: wordCn,
         unitId: unitId,
         unitTitle: unitTitle,
+        subject: subject,
         missedCount: 1,
         lastMissed: new Date().toISOString()
       });
