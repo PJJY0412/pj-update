@@ -1295,7 +1295,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     this.mathDailyWords = words;
     let html = '<div class="subject-container">';
     html += '<button class="back-btn" onclick="App.renderDailyHome()">← 返回每天必练</button>';
-    html += '<h2 class="course-title">📐 数学作业</h2>';
+    html += '<h2 class="course-title">📐 数学作业.趣味练</h2>';
     if (!words.length) {
       html += '<div style="padding:0 16px"><div class="empty-state" style="padding:30px"><p>老师还未布置数学作业，先去完成课程学习吧</p></div></div>';
       html += '</div>';
@@ -1403,7 +1403,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const total = st.words.length;
     const eq = this._mathParseEn(w.en);
     const isKoujue = eq != null && /[\u4e00-\u9fff]/.test(String(w.cn || '')) && String(w.cn).indexOf('=') < 0;
-    const speakTxt = isKoujue && w.cn ? String(w.cn) : (eq ? this._mathExprZh(eq) : String(w.en || w.cn || ''));
+    // 口诀竞答读题都读算式题目（如"一乘一等于多少"），不读口诀/答案（避免泄题）
+    const speakTxt = eq ? this._mathExprZhQ(eq) : String(w.cn || w.en || '');
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App._mathMemCleanup();App.renderMathDailyModes()">← 返回数学作业</button>';
     html += '<h2 class="course-title">📋 口诀竞答</h2>';
@@ -2237,6 +2238,10 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _mathExprZh(eq) {
     return this._mathNumCn(eq.a) + this._mathOpZh(eq.op) + this._mathNumCn(eq.b) + '等于' + this._mathNumCn(eq.result);
   },
+  // 读题用（不念答案）：如 1×7=? → "一乘七等于多少"（填空/口算读题，避免泄题）
+  _mathExprZhQ(eq) {
+    return this._mathNumCn(eq.a) + this._mathOpZh(eq.op) + this._mathNumCn(eq.b) + '等于多少';
+  },
   // 从数学词/兜底集生成口算题（返回 {a,op,b,result,阶})
   _mathGenArith(pool, limit) {
     const out = [];
@@ -2301,7 +2306,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const w = st.words[st.idx];
     const ex = this._buildMathLessonEx(w);
     const eq = ex.eq;
-    const sounds = eq ? this._mathExprZh(eq) : String(w.cn || w.en || '');
+    // 填空题读题不念答案（如 1×7=? 读"一乘七等于多少"，避免泄题）；概念读法照旧
+    const sounds = eq ? (ex.type === 'fill' ? this._mathExprZhQ(eq) : this._mathExprZh(eq)) : String(w.cn || w.en || '');
     const main = document.getElementById('main-content');
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App.exitToUnit()">← 返回上一级</button>';
@@ -2402,7 +2408,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _mathLessonJudgeResult(ex, w, ok) {
     if (ok) return;
     try {
-      Storage.addWrongWord(String(w.en || ''), String(w.cn || ''), this.currentUnitId || 0, '数学练习');
+      Storage.addWrongWord(String(w.en || ''), String(w.cn || ''), this.currentUnitId || 0, '数学练习', 'math');
     } catch (e) {}
   },
   _mathLessonNext() {
@@ -2465,7 +2471,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div></div>';
     main.innerHTML = html;
 
-    const speakTxt = this._mathExprZh(q);
+    const speakTxt = this._mathExprZhQ(q);
     document.getElementById('math-oral-speak').addEventListener('click', () => this.speakChinese(speakTxt));
     const input = document.getElementById('math-oral-input');
     const submit = document.getElementById('math-oral-submit');
@@ -2528,8 +2534,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _mathMemSpeak(i, onEnd) {
     const m = this._mathMemCurrentCouplet(i);
     if (!m) return;
-    if (m.eq && m.w.cn) this._zhSpeak(m.w.cn, onEnd);
-    else this.speakChinese(String(m.w.en || m.w.cn || ''), onEnd);
+    if (m.eq) this.speakChinese(this._mathExprZhQ(m.eq), onEnd);
+    else this.speakChinese(String(m.w.cn || m.w.en || ''), onEnd);
   },
 
   // ---- 数学每天必练老玩法入口改判（dummy 占位，供渲染用）----
@@ -2653,7 +2659,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       f.cleared[idx] = true;
     } else {
       f.relearn[idx] = true;
-      try { Storage.addWrongWord(String(w.zi || ''), String(w.yi || w.pinyin || ''), 0, '每天必练·语文'); } catch (e) {}
+      try { Storage.addWrongWord(String(w.zi || ''), String(w.yi || w.pinyin || ''), 0, '每天必练·语文', 'chinese'); } catch (e) {}
       f.deck.push(idx);
     }
     f.pos++;
@@ -3154,40 +3160,50 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     let html = '<div class="reading-container">';
     html += '<button class="back-btn" onclick="App._zhFlyExit()">← 返回语文作业</button>';
     html += '<h2 class="reading-title">🪰 拍苍蝇</h2>';
-    html += '<div class="zh-q-fb" style="min-height:28px">' + (idx + 1) + ' / ' + words.length + ' · 听读音，拍中正确的字！</div>';
-    html += '<div class="zh-fly-grid">';
+    html += '<div class="zh-q-fb" style="min-height:28px">' + (idx + 1) + ' / ' + words.length + ' · 听读音，拍中藏字的苍蝇！</div>';
+    // 动画场地：苍蝇带着汉字四处飞，拍中目标字的那只
     const pool = words.slice();
     pool.sort(function() { return Math.random() - 0.5; });
-    pool.forEach(function(w) {
-      const isTarget = w.zi === target.zi;
-      html += '<button class="zh-fly-btn" data-zi="' + w.zi + '" style="background:' + (isTarget ? '#FFF9C4' : '#FFF') + '">' + w.zi + '</button>';
+    const picks = [];
+    const seen = {};
+    if (target.zi) { picks.push(target); seen[target.zi] = true; }
+    pool.forEach(function(w) { if (picks.length >= 5) return; if (w.zi && !seen[w.zi]) { picks.push(w); seen[w.zi] = true; } });
+    if (picks.length < 2 && words.length > 1) {
+      pool.forEach(function(w) { if (picks.length >= 5) return; if (w.zi) { picks.push(w); seen[w.zi] = true; } });
+    }
+    html += '<div class="zh-fly-arena" style="position:relative;overflow:hidden;width:100%;height:420px;margin:12px auto">';
+    picks.forEach(function(w, i) {
+      let left = 12 + Math.random() * 60;
+      let top = 8 + i * 16 + Math.random() * 20;
+      if (top > 80) top = 80 - Math.random() * 10;
+      html += '<div class="zh-fly" data-zi="' + w.zi + '" style="left:' + left.toFixed(1) + '%;top:' + top.toFixed(1) + '%;animation-delay:' + (Math.random() * 0.8).toFixed(2) + 's">';
+      html += '<span class="zh-fly-icon">🪰</span><span>' + w.zi + '</span>';
+      html += '</div>';
     });
     html += '</div>';
     html += '<div class="zh-q-score" style="margin-top:12px">✅ ' + this.zhFlyScore + ' · ❌ ' + this.zhFlyWrong + '</div>';
     html += '</div>';
     main.innerHTML = html;
-    document.querySelectorAll('.zh-fly-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
+    document.querySelectorAll('.zh-fly').forEach(function(el) {
+      el.addEventListener('click', function() {
         if (self.zhFlyLocked) return;
-        const zi = btn.dataset.zi;
+        const zi = el.dataset.zi;
         if (zi === target.zi) {
           self.zhFlyLocked = true;
           self.zhFlyScore++;
-          btn.style.background = '#C8E6C9';
-          btn.style.borderColor = '#4CAF50';
+          el.classList.add('zh-fly-hit');
           const fb = document.querySelector('.zh-q-fb');
-          if (fb) fb.textContent = '✅ 太棒了！拍到了！';
+          if (fb) fb.textContent = '✅ 拍中啦！';
+          document.querySelectorAll('.zh-fly').forEach(function(o) { if (o !== el) o.style.animationPlayState = 'paused'; });
           self.zhFlyIdx++;
           if (self.zhFlyTimer) { clearInterval(self.zhFlyTimer); self.zhFlyTimer = null; }
-          setTimeout(function() { self._zhFlyRender(); }, 700);
+          setTimeout(function() { self._zhFlyRender(); }, 850);
         } else {
           self.zhFlyWrong++;
-          btn.style.background = '#FFCDD2';
-          btn.style.borderColor = '#E53935';
+          el.classList.add('zh-fly-miss');
           self.zhFlyLocked = true;
           setTimeout(function() {
-            btn.style.background = '#FFF';
-            btn.style.borderColor = '';
+            el.classList.remove('zh-fly-miss');
             self.zhFlyLocked = false;
           }, 500);
         }
@@ -3244,7 +3260,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
 
     let html = '<div class="subject-container">';
 html += '<button class="back-btn" onclick="App.renderSubjectSelector()">← 返回上一级</button>';
-    html += '<h2 class="course-title">📅 每天必练</h2>';
+    html += '<h2 class="course-title">📗 英语作业.趣味练</h2>';
     if (words.length === 0) {
       html += '<div class="empty-state" style="padding:30px"><p>老师还未布置作业，先去完成课程学习吧</p></div>';
       html += '</div>';
@@ -9843,7 +9859,7 @@ var SUPER_PW = 'pj889988';
 
   _zhAddWrong(w, info) {
     try {
-      Storage.addWrongWord(String(w.zi || ''), String(w.yi || w.pinyin || ''), info.unitId, info.unitTitle);
+      Storage.addWrongWord(String(w.zi || ''), String(w.yi || w.pinyin || ''), info.unitId, info.unitTitle, 'chinese');
     } catch (e) {}
   },
 
@@ -11773,7 +11789,7 @@ var SUPER_PW = 'pj889988';
       btn.classList.add('wrong');
       optBtns.forEach(b => { if (b.textContent.trim() === blankText) b.classList.add('correct'); });
       try {
-        Storage.addWrongWord(String(poem.zi || ''), String(poem.yi || ''), this.currentUnitId, (this.getUnitInfo(this.currentUnitId) || {}).unitTitle || '');
+        Storage.addWrongWord(String(poem.zi || ''), String(poem.yi || ''), this.currentUnitId, (this.getUnitInfo(this.currentUnitId) || {}).unitTitle || '', 'chinese');
       } catch (e) {}
     }
     this.zhFillIdx++;
@@ -11876,7 +11892,7 @@ var SUPER_PW = 'pj889988';
       btn.classList.add('wrong');
       optBtns.forEach(b => { if (b.textContent.trim() === author) b.classList.add('correct'); });
       try {
-        Storage.addWrongWord(String(poem.zi || ''), String(poem.pinyin || poem.yi || ''), this.currentUnitId, (this.getUnitInfo(this.currentUnitId) || {}).unitTitle || '');
+        Storage.addWrongWord(String(poem.zi || ''), String(poem.pinyin || poem.yi || ''), this.currentUnitId, (this.getUnitInfo(this.currentUnitId) || {}).unitTitle || '', 'chinese');
       } catch (e) {}
     }
     this.zhAuthorIdx++;
@@ -14633,7 +14649,6 @@ _ttsCancel() {
       if (!d) return;
       if (d.type === 'homework' && d.hw) {
         if (norm(d.toName) !== norm(myName)) return;
-        if (d.toGrade && norm(d.toGrade) !== norm(myGrade)) return;
         const sid = myId;
         const hw = d.hw;
         if (d.subject === 'chinese') Storage.saveHomeworkZh(sid, hw);
@@ -15368,4 +15383,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260828-1706';
+window.__SERVER_VER = '20260828-1707';
