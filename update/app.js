@@ -4239,6 +4239,7 @@ main.innerHTML = html;
         const grade = btn.dataset.grade || Storage.getCurrentGrade({ id: sid }) || '';
         if (confirm('确定要删除学员"' + name + '"及其所有学习数据吗？此操作不可恢复。')) {
           Storage.deleteStudent(sid);
+          Storage.addPendingStudentRemoval(name, grade);
           this._pushStudentsToHost([{ name: name, grade: grade }]);
           this._renderAdminStudents();
         }
@@ -5214,7 +5215,13 @@ if (this._apkNoticeShown) return;
         if (self.currentView === 'login') self.renderLogin();
       } catch (e) {}
     };
-    tryLan().then(ok => { if (!ok) return tryCloud(); }).then(refreshIfNeeded, refreshIfNeeded);
+    tryLan().then(ok => {
+      if (ok) {
+        try { self._flushPendingStudentRemovals(); } catch (e) {}
+      } else {
+        return tryCloud();
+      }
+    }).then(refreshIfNeeded, refreshIfNeeded);
   },
 
   _cloudMetaUrl() {
@@ -7652,7 +7659,13 @@ html += '<div id="pub-recv-status" style="font-size:12px;color:var(--text-light)
       this._saveHost(host);
       status.innerHTML = '<span style="color:#1565C0">正在连接电脑接收...</span>';
       const students = Storage.getStudents().filter(s => this._gradeAllowed(Storage.getCurrentGrade(s)));
-      const seq = students.map(s => {
+      const seq = [this._lanGet('http://' + host + ':8899/pull?student=' + encodeURIComponent('公共错题库')).then(res => {
+        if (!res.ok) return [];
+        let items = [];
+        try { const j = JSON.parse(res.body || '{}'); items = j.items || []; } catch (e) {}
+        return items.map(it => ({ grade: it.grade || 1, subject: it.subject || 'english', text: String(it.text || '').trim(), createdAt: it.createdAt }));
+      }).catch(() => [])];
+      seq.push.apply(seq, students.map(s => {
         const grade = Storage.getCurrentGrade(s);
         return this._lanGet('http://' + host + ':8899/pull?student=' + encodeURIComponent(s.name)).then(res => {
           if (!res.ok) return [];
@@ -7660,7 +7673,7 @@ html += '<div id="pub-recv-status" style="font-size:12px;color:var(--text-light)
           try { const j = JSON.parse(res.body || '{}'); items = j.items || []; } catch (e) {}
           return items.map(it => ({ grade: it.grade || grade, subject: it.subject || 'english', text: String(it.text || '').trim(), createdAt: it.createdAt }));
         }).catch(() => []);
-      });
+      }));
       Promise.all(seq).then(results => {
         const items = [].concat.apply([], results).filter(it => it.text);
         if (items.length === 0) { status.innerHTML = '<span style="color:#8D6E63">ℹ️ 电脑上没有该学员的错题（或连接失败，请确认电脑已启动接收器）</span>'; return; }
@@ -8078,10 +8091,17 @@ students.forEach(s => {
     });
   },
 
+  // 同步学员到电脑/云端；removedList 为本次(在线)删除，另合并持久化队列的离线删除，成功后清空已同步队列
   _pushStudentsToHost(removedList) {
     try {
       const host = this._getSavedHost();
-      const removed = Array.isArray(removedList) ? removedList : [];
+      let removed = Array.isArray(removedList) ? removedList.slice() : [];
+      const pending = Storage.getPendingStudentRemovals();
+      pending.forEach(r => {
+        if (r && !removed.some(x => x && String(x.name) === String(r.name) && String(x.grade) === String(r.grade))) {
+          removed.push({ name: r.name, grade: r.grade });
+        }
+      });
       const students = Storage.getStudents().map(s => ({
         name: s.name,
         grade: Storage.getCurrentGrade(s),
@@ -8091,16 +8111,29 @@ students.forEach(s => {
       const payloadObj = { students: students };
       if (removed.length) payloadObj.removed = removed;
       const payload = JSON.stringify(payloadObj);
+      const onOk = () => { try { Storage.clearPendingStudentRemovals(removed); } catch (e) {} };
       // 先尝试局域网
       if (host) {
-        return this._lanPost('http://' + host + ':8899/students', payload).catch(() => this._pushStudentsToCloud(payload));
+        return this._lanPost('http://' + host + ':8899/students', payload).then(res => {
+          onOk();
+          return res;
+        }).catch(() => this._pushStudentsToCloud(payload, onOk));
       }
       // 无局域网主机，直接走云端
-      return this._pushStudentsToCloud(payload);
+      return this._pushStudentsToCloud(payload, onOk);
     } catch (e) { return Promise.resolve(); }
   },
 
-  _pushStudentsToCloud(payload) {
+  // 连线时补发未同步的离线删除（启动/登录/学员汇总等场景调用）
+  _flushPendingStudentRemovals() {
+    try {
+      const pending = Storage.getPendingStudentRemovals();
+      if (!pending.length) return Promise.resolve();
+      return this._pushStudentsToHost();
+    } catch (e) { return Promise.resolve(); }
+  },
+
+  _pushStudentsToCloud(payload, onOk) {
     // 直接 POST 到 receiver 的 cloud 同步接口（需 receiver 在线）或未来扩展 GitHub API
     // 这里仅尝试局域网回退；真正的云端写入需 receiver 在线接收后同步到 GitHub
     return Promise.resolve();
@@ -15479,4 +15512,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260828-1707';
+window.__SERVER_VER = '20260829-1708';
