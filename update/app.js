@@ -98,12 +98,14 @@ const App = {
     try {
       this.setupNavListeners();
       this._syncStudentsFromCloud(); // 启动时同步学员名单
+      this._autoRestorePublicWrongs(); // 公共错题库为空时自动从电脑拉回
       this.renderLogin();
     } catch(e) {
       var el = document.getElementById('main-content');
       if (el) el.innerHTML = '<div style="padding:40px;text-align:center;color:red"><h2>初始化失败</h2><p>' + e.message + '</p></div>';
     }
     setTimeout(() => { try { this._checkJsUpdate(); } catch(e) {} }, 6000);
+    setTimeout(() => { try { this._updQuiet = true; this._checkJsUpdate(1); } catch(e) {} }, 30000);
     setTimeout(() => { try { this._prewarmNetwork(); } catch(e) {} }, 1500);
     document.addEventListener('click', function(e) {
       var btn = e.target.closest('.play-recording-btn');
@@ -5256,6 +5258,27 @@ main.innerHTML = html;
     } catch (e) { return false; }
   },
 
+  _wantApk(v, cur) {
+    // 判断 v 标明的 APK 是否值得下载：必须比已装(本地记录)与内置版本都更新，严格防降级。
+    // 关键场景：平板走云端装了新版、公司电脑更新目录还是旧版时，LAN /check 返回旧版不得被当作"新版"再拉下去。
+    try {
+      if (!v || !v.hash) return false;
+      if (this._sameApk(cur, v)) return false;
+      const bv = String(window.__BUILTIN_VER || window.__SERVER_VER || '').trim();
+      const va = String(v.version || '').trim();
+      const vb = String((cur && cur.version) || '').trim();
+      const ch = String((cur && cur.hash) || '').toLowerCase();
+      const isDate = (s) => /^\d{8}-\d{4}$/.test(s);
+      if (isDate(va)) {
+        if (ch && isDate(vb)) return va > vb;
+        if (ch && !vb) return true;
+        if (isDate(bv)) return va > bv;
+        return true;
+      }
+      return this._newerThanBuiltin(v);
+    } catch (e) { return false; }
+  },
+
   _checkJsUpdate(attempt) {
     attempt = attempt || 0;
     let host = this._getSavedHost();
@@ -5281,7 +5304,7 @@ main.innerHTML = html;
           return;
         }
         const cur = Storage.getApkInfo();
-        const need = !this._sameApk(cur, v.apk) || this._newerThanBuiltin(v.apk);
+        const need = this._wantApk(v.apk, cur);
         if (need) {
           if (!this._apkNoticeShown) {
             this._apkNoticeShown = true;
@@ -5296,6 +5319,7 @@ main.innerHTML = html;
         }
 if (this._apkNoticeShown) return;
         this._updLog('✅ 已是最新版本');
+        this._checkCloudAfterLan(v.apk);
       })
       .catch(e => {
         this._updLog('❌ 局域网更新不可用：' + (e && e.message ? e.message : e));
@@ -5306,6 +5330,15 @@ if (this._apkNoticeShown) return;
         setTimeout(() => { try { this._checkCloudUpdate(0); } catch (e2) {} }, 300);
       });
     },
+
+  _checkCloudAfterLan(lanApk) {
+    // LAN 端已是新版时，仍核对一次云端：防止公司电脑"更新目录"未同步到云端新版，
+    // 平板比对 LAN 一直相等而永远停在旧版（与 LAN 优先、云端兜底 的次序不冲突）。
+    try {
+      this._updLog('局域网已是最新，再核对云端版本...');
+      setTimeout(() => { try { this._checkCloudUpdate(0); } catch (e) {} }, 800);
+    } catch (e) {}
+  },
 
   // 从云端/局域网同步学员名单到本地
   _syncStudentsFromCloud() {
@@ -5374,7 +5407,7 @@ if (this._apkNoticeShown) return;
         try { v = JSON.parse(txt); } catch (e) {}
         if (!v || !v.apk) throw new Error('云端版本信息无效');
         const cur = Storage.getApkInfo();
-        const need = !this._sameApk(cur, v.apk) || this._newerThanBuiltin(v.apk);
+        const need = this._wantApk(v.apk, cur);
         if (need) {
           if (!this._apkNoticeShown) {
             this._apkNoticeShown = true;
@@ -5404,6 +5437,7 @@ if (this._apkNoticeShown) return;
 
 _updLog(msg) {
     try {
+      if (this._updQuiet) return;
       let el = document.getElementById('upd-log');
       if (!el) el = document.getElementById('unlock-upd-log');
       if (!el) return;
@@ -7731,6 +7765,11 @@ html += '<div id="pub-recv-status" style="font-size:12px;color:var(--text-light)
     const sendSelBtn = document.getElementById('pub-send-sel');
     if (sendSelBtn) sendSelBtn.addEventListener('click', () => this._renderPubSendTargetPanel());
     this._bindHostInput('pub-recv-host');
+    if (list.length === 0) {
+      this._autoRestorePublicWrongs().then(n => {
+        if (n > 0) this._renderPublicWrongBank();
+      });
+    }
 
     const importDo = document.getElementById('pub-import-do');
     if (importDo) importDo.addEventListener('click', () => {
@@ -7816,6 +7855,38 @@ html += '<div id="pub-recv-status" style="font-size:12px;color:var(--text-light)
         this._renderPublicWrongBank();
       });
 });
+  },
+
+  // 保险机制：公共错题库为空且局域网可达时，自动从电脑"公共错题库"拉取合并恢复
+  // （防止平板本地存储被清后公共错题库一直空置；仅合并去重建，不清不覆盖，2 分钟节流）
+  _autoRestorePublicWrongs() {
+    if (this._pubAutoDoing) return this._pubAutoDoing;
+    try {
+      if (Storage.getPublicWrongs().length > 0) return Promise.resolve(0);
+      const host = this._getSavedHost();
+      if (!host) return Promise.resolve(0);
+      let last = 0;
+      try { last = parseInt(localStorage.getItem('pjyx_pub_restore_at') || '0', 10) || 0; } catch (e) {}
+      if (Date.now() - last < 120000) return Promise.resolve(0);
+      try { localStorage.setItem('pjyx_pub_restore_at', String(Date.now())); } catch (e) {}
+      let url;
+      try { url = 'http://' + host + ':8899/pull?student=' + encodeURIComponent('公共错题库'); } catch (e) { return Promise.resolve(0); }
+      const p = this._lanGet(url).then(res => {
+        if (!res.ok) return 0;
+        let items = [];
+        try { items = (JSON.parse(res.body || '{}').items || []); } catch (e) {}
+        const mapped = (items || []).map(it => ({
+          grade: it.grade || 1,
+          subject: it.subject || 'english',
+          text: String(it.text || '').trim(),
+          createdAt: it.createdAt
+        })).filter(it => it.text);
+        if (!mapped.length) return 0;
+        return this._pubMerge(mapped);
+      }).catch(() => 0).then(n => { this._pubAutoDoing = null; return n; });
+      this._pubAutoDoing = p;
+      return p;
+    } catch (e) { return Promise.resolve(0); }
   },
 
   _pubDefaultGrade() {
@@ -15653,4 +15724,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260829-1711';
+window.__SERVER_VER = '20260829-1713';
