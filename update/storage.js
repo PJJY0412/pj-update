@@ -320,6 +320,43 @@ const Storage = {
     this.exportBackup();
   },
 
+  // 删除学员后，把删除动作持久化到全局队列（离线删除时保留，连线后由 app.js 补发到电脑/云端）
+  addPendingStudentRemoval(name, grade) {
+    const prev = this._studentId;
+    this._studentId = null;
+    try {
+      const list = this.load('pendingStudentRemovals', []);
+      if (!Array.isArray(list)) { this._studentId = prev; return; }
+      const exists = list.some(r => r && String(r.name) === String(name) && String(r.grade) === String(grade));
+      if (!exists) {
+        list.push({ name: String(name), grade: String(grade), at: new Date().toISOString() });
+        this.save('pendingStudentRemovals', list);
+      }
+    } catch (e) {}
+    this._studentId = prev;
+  },
+
+  getPendingStudentRemovals() {
+    const prev = this._studentId;
+    this._studentId = null;
+    const list = this.load('pendingStudentRemovals', []);
+    this._studentId = prev;
+    return Array.isArray(list) ? list : [];
+  },
+
+  clearPendingStudentRemovals(removed) {
+    const prev = this._studentId;
+    this._studentId = null;
+    try {
+      const done = removed || [];
+      const set = {};
+      done.forEach(r => { if (r) set[String(r.name) + '|' + String(r.grade)] = true; });
+      const list = this.load('pendingStudentRemovals', []).filter(r => !(r && set[String(r.name) + '|' + String(r.grade)]));
+      this.save('pendingStudentRemovals', list);
+    } catch (e) {}
+    this._studentId = prev;
+  },
+
   saveScanWorks(studentId, list) {
     const prev = this._studentId;
     this._studentId = studentId;
