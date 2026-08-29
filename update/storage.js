@@ -216,10 +216,33 @@ const Storage = {
     }
   },
 
+  // 给缺失 id 的学员补唯一数字 id（云端/电脑 /students.json 只回 name/grade/createdAt 无 id，
+  // 旧版 merge 原样入库曾导致所有学员 id=undefined → 登录串台、作业共用同一本地键）。一次性自愈。
+  _ensureStudentIds(list) {
+    let changed = false;
+    if (!Array.isArray(list)) return false;
+    const seen = new Set();
+    list.forEach(s => { if (s && s.id !== undefined && s.id !== null && s.id !== '') seen.add(String(s.id)); });
+    list.forEach(s => {
+      if (!s || typeof s !== 'object') return;
+      if (s.id === undefined || s.id === null || s.id === '') {
+        let id = Date.now() + Math.floor(Math.random() * 10000);
+        while (seen.has(String(id))) id = Date.now() + Math.floor(Math.random() * 10000);
+        s.id = id;
+        seen.add(String(id));
+        changed = true;
+      }
+      if (s.gradeStartYear == null) s.gradeStartYear = new Date().getFullYear();
+      if (s.createdAt == null) s.createdAt = new Date().toISOString();
+    });
+    return changed;
+  },
+
   getStudents() {
     const prev = this._studentId;
     this._studentId = null;
     const list = this.load('students', []);
+    if (this._ensureStudentIds(list)) this.save('students', list);
     this._studentId = prev;
     return list;
   },
@@ -288,6 +311,8 @@ const Storage = {
       }
     });
     const merged = Object.values(dict);
+    // 云端合并来的新学员可能无 id → 补唯一 id（否则所有学员共用 undefined 的存储键/登录串台）
+    this._ensureStudentIds(merged);
     const prev = this._studentId;
     this._studentId = null;
     this.save('students', merged);
