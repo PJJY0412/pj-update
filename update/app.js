@@ -2582,16 +2582,16 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<button class="back-btn" onclick="App._mathPaperCleanup();App.renderMathDailyModes()">← 返回数学作业</button>';
     html += '<h2 class="course-title">📝 口算作业</h2>';
     html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">共 ' + p.items.length + ' 题 · 直接在下方作答，交卷后自动判分</div>';
-    html += '<button class="login-btn" id="math-paper-speak" style="display:block;margin:0 auto 14px">🔊 朗读全部题目</button>';
     html += '<div style="padding:0 4px">';
     p.items.forEach((it, i) => {
       const eq = it.eq;
       const disp = this._h(eq.a) + ' ' + this._h(this._mathOpZh(eq.op)) + ' ' + this._h(eq.b) + ' = ?';
       const fbR = (p.judged && p.answers[i]) ? '<div style="font-size:15px;color:' + (p.answers[i].correct ? '#2E7D32' : '#C62828') + '">' + (p.answers[i].correct ? '✅ 正确' : '❌ 正确答案 ' + this._h(eq.result)) + '</div>' : '';
+      const kept = (p.judged && p.answers[i]) ? this._h(String(p.answers[i].val || '')) : '';
       html += '<div class="math-card" style="padding:14px 16px;margin-bottom:10px">';
       html += '<div style="display:flex;align-items:center;justify-content:space-between">';
       html += '<div style="flex:1;font-size:20px;font-weight:700;color:#0D47A1;letter-spacing:2px">' + (i + 1) + '. ' + disp + '</div>';
-      html += '<input type="number" id="mp-in-' + i + '" class="fill-input" style="width:110px;font-size:22px;text-align:center" inputmode="decimal" placeholder="答案"' + (p.judged ? ' disabled' : '') + '>';
+      html += '<input type="number" id="mp-in-' + i + '" class="fill-input" style="width:110px;font-size:22px;text-align:center" inputmode="decimal" placeholder="答案" value="' + kept + '"' + (p.judged ? ' disabled' : '') + '>';
       html += '</div>';
       html += '<div id="mp-fb-' + i + '" style="min-height:22px;font-size:14px;margin-top:6px">' + fbR + '</div>';
       html += '</div>';
@@ -2607,9 +2607,6 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '</div>';
     main.innerHTML = html;
 
-    document.getElementById('math-paper-speak').addEventListener('click', () => {
-      this.speakChinese(p.items.map(it => this._mathExprZhQ(it.eq)).join('，'));
-    });
     if (!p.judged) {
       document.getElementById('math-paper-submit').addEventListener('click', () => this._mathPaperJudge());
     } else {
@@ -15648,4 +15645,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260829-1709';
+window.__SERVER_VER = '20260829-1710';
