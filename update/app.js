@@ -1190,7 +1190,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const w = words[st.index];
     const front = subject === 'chinese'
       ? '<div style="font-size:64px;font-weight:700;letter-spacing:8px">' + this._h(w.zi) + '</div><div style="margin-top:8px;font-size:18px;color:var(--text-light)">' + this._h(w.pinyin) + '</div>'
-      : '<div style="font-size:30px;font-weight:700;padding:0 10px">' + this._h(w.en) + '</div>';
+      : '<div style="font-size:30px;font-weight:700;padding:0 10px">' + this._h(this._mathDisp(w.en)) + '</div>';
     const back = subject === 'chinese'
       ? '<div style="font-size:40px;font-weight:700;letter-spacing:4px;color:#4E342E">' + this._h(w.zi) + '</div><div style="font-size:18px;color:#E65100;margin-top:6px">' + this._h(w.pinyin) + '</div>'
         + '<div style="font-size:20px;color:#5D4037;margin-top:12px;line-height:1.8">' + this._h(w.yi) + '</div>'
@@ -1414,13 +1414,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div class="math-card" style="padding:24px;text-align:center">';
     if (isKoujue) {
       html += '<div style="font-size:15px;color:#666;margin-bottom:8px">看算式，选出正确的口诀</div>';
-      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(eq.a) + ' ' + this._mathOpZh(eq.op) + ' ' + this._h(eq.b) + ' = ' + this._h(eq.result) + '</div>';
+      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(eq.a) + ' ' + this._mathOpSym(eq.op) + ' ' + this._h(eq.b) + ' = ' + this._h(eq.result) + '</div>';
       const opts = this._mathMemKoujueOpts(st, st.idx);
       html += '<div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">' + opts.map((o, i) => '<button class="math-opt-btn math-mem-kj" data-oi="' + i + '"' + (st.answered ? ' disabled' : '') + '>' + this._h(o) + '</button>').join('') + '</div>';
       html += '<div id="math-mem-fb" style="margin-top:14px;min-height:24px"></div>';
     } else {
       html += '<div style="font-size:15px;color:#666;margin-bottom:8px">计算并填写答案</div>';
-      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(eq ? eq.a : w.en) + (eq ? ' ' + this._mathOpZh(eq.op) + ' ' + this._h(eq.b) : '') + ' ' + (eq ? '= ?' : String(w.cn || '')) + '</div>';
+      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(eq ? eq.a : this._mathDisp(w.en)) + (eq ? ' ' + this._mathOpSym(eq.op) + ' ' + this._h(eq.b) : '') + ' ' + (eq ? '= ?' : String(w.cn || '')) + '</div>';
       html += '<input type="number" id="math-mem-input" class="fill-input" style="font-size:28px;text-align:center;width:150px;margin-top:12px" placeholder="?" ' + (st.answered ? 'disabled' : '') + '>';
       html += '<div style="margin-top:10px"><button class="submit-btn" id="math-mem-submit" ' + (st.answered ? 'disabled' : '') + '>确认</button></div>';
       html += '<div id="math-mem-fb" style="margin-top:14px;min-height:24px"></div>';
@@ -1525,7 +1525,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<h2 class="course-title">❌ 错题重练</h2>';
     html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">第 ' + (st.idx + 1) + ' / ' + total + ' 题 · 已纠正 ' + Object.keys(st.reviewed).filter(k => st.reviewed[k]).length + ' 道</div>';
     html += '<div class="math-card" style="text-align:center;padding:24px">';
-    html += '<div style="font-size:22px;font-weight:700;color:#E57373;margin-bottom:12px">' + this._h(w.en) + '</div>';
+    html += '<div style="font-size:22px;font-weight:700;color:#E57373;margin-bottom:12px">' + this._h(this._mathDisp(w.en)) + '</div>';
     html += '<div style="font-size:18px;color:#333;margin-bottom:16px">' + this._h(w.cn) + '</div>';
     html += '<div style="background:#FFF3E0;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px;color:#E65100">💡 <strong>易错点：</strong>' + (w.example || '易混淆运算顺序/单位换算/进位退位') + '</div>';
     html += '<div style="display:flex;flex-direction:column;gap:10px">';
@@ -1799,7 +1799,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const eq = this._mathParseEn(w.en);
     if (eq) {
       const isKoujue = /[\u4e00-\u9fff]/.test(String(w.cn || ''));
-      const q = this._h(eq.a) + ' ' + this._mathOpZh(eq.op) + ' ' + this._h(eq.b) + ' = ?';
+      const q = this._h(eq.a) + ' ' + this._mathOpSym(eq.op) + ' ' + this._h(eq.b) + ' = ?';
       const ans = isKoujue ? String(w.cn || '').trim() : String(eq.result);
       return { q: q, ans: ans, kind: isKoujue ? 'koujue' : 'eqnum', opts: this._mathBuildOpts(ans, allWords, w) };
     }
@@ -1941,9 +1941,9 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         var aMul = ea.op === '×' || ea.op === '÷';
         var bMul = eb.op === '×' || eb.op === '÷';
         if (aMul !== bMul) {
-          pairs.push({ q: '下面哪个算式是<strong>乘除法</strong>？', a: a, b: b, correct: aMul ? 0 : 1, labelA: self._h(a.en), labelB: self._h(b.en) });
+          pairs.push({ q: '下面哪个算式是<strong>乘除法</strong>？', a: a, b: b, correct: aMul ? 0 : 1, labelA: self._h(self._mathDisp(a.en)), labelB: self._h(self._mathDisp(b.en)) });
         } else if (ea.result !== eb.result) {
-          pairs.push({ q: '下面哪个算式的<strong>得数更大</strong>？', a: a, b: b, correct: ea.result > eb.result ? 0 : 1, labelA: self._h(a.en), labelB: self._h(b.en) });
+          pairs.push({ q: '下面哪个算式的<strong>得数更大</strong>？', a: a, b: b, correct: ea.result > eb.result ? 0 : 1, labelA: self._h(self._mathDisp(a.en)), labelB: self._h(self._mathDisp(b.en)) });
         }
       }
     }
@@ -2242,6 +2242,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     if (op === '÷') return '除以';
     return op;
   },
+  _mathOpSym(op) {
+    if (op === 'x' || op === 'X' || op === '*') return '×';
+    if (op === '+' || op === '-' || op === '×' || op === '÷') return String(op);
+    return String(op || '');
+  },
+  _mathDisp(s) {
+    return String(s || '').replace(/[xX*]/g, '×');
+  },
   // 数字转中文读音（用于朗读结果/算式，如 5→五、12→十二、100→一百）
   _mathNumCn(n) {
     const s = String(n);
@@ -2349,9 +2357,9 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div style="text-align:center;margin:8px 0;font-size:13px;color:var(--text-light)">第 ' + (st.idx + 1) + ' / ' + st.total + ' 题 · 答对 ' + st.score + '</div>';
     html += '<button class="login-btn" id="math-lesson-speak" style="display:block;margin:0 auto 14px">🔊 读题</button>';
     if (ex.type === 'fill') {
-      const opzh = this._mathOpZh(eq.op);
+      const opsym = this._mathOpSym(eq.op);
       html += '<div class="math-card" style="padding:30px;text-align:center">';
-      html += '<div style="font-size:44px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(eq.a) + ' ' + opzh + ' ' + this._h(eq.b) + ' = <span id="ml-ans">?</span></div>';
+      html += '<div style="font-size:44px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(eq.a) + ' ' + opsym + ' ' + this._h(eq.b) + ' = <span id="ml-ans">?</span></div>';
       html += '<div style="margin-top:16px;font-size:14px;color:#666">请填写答案</div>';
       html += '<input type="number" id="math-fill-input" class="fill-input" style="font-size:28px;text-align:center;width:140px" placeholder="?" ' + (st.answered ? 'disabled' : '') + '>';
       html += '</div>';
@@ -2487,7 +2495,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _renderMathOral() {
     const st = this._mathOral;
     const q = st.qs[st.idx];
-    const opzh = this._mathOpZh(q.op);
+    const opsym = this._mathOpSym(q.op);
     const main = document.getElementById('main-content');
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App._mathOralCleanup();App.renderMathDailyModes()">← 返回数学作业</button>';
@@ -2495,7 +2503,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div style="text-align:center;margin:8px 0;font-size:13px;color:var(--text-light)">' + (st.idx + 1) + ' / ' + st.qs.length + ' 题 · 答对 ' + st.score + '</div>';
     html += '<button class="login-btn" id="math-oral-speak" style="display:block;margin:0 auto 14px">🔊 读题</button>';
     html += '<div class="math-card" style="padding:30px;text-align:center">';
-    html += '<div style="font-size:46px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(q.a) + ' ' + opzh + ' ' + this._h(q.b) + ' = ?</div>';
+    html += '<div style="font-size:46px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(q.a) + ' ' + opsym + ' ' + this._h(q.b) + ' = ?</div>';
     html += '<input type="number" id="math-oral-input" class="fill-input" style="font-size:30px;text-align:center;width:150px;margin-top:12px" placeholder="?" ' + (st.answered ? 'disabled' : '') + '>';
     html += '</div>';
     html += '<button class="submit-btn" id="math-oral-submit" ' + (st.answered ? 'disabled' : '') + '>确认</button>';
@@ -2585,7 +2593,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div style="padding:0 4px">';
     p.items.forEach((it, i) => {
       const eq = it.eq;
-      const disp = this._h(eq.a) + ' ' + this._h(this._mathOpZh(eq.op)) + ' ' + this._h(eq.b) + ' = ?';
+      const disp = this._h(eq.a) + ' ' + this._h(this._mathOpSym(eq.op)) + ' ' + this._h(eq.b) + ' = ?';
       const fbR = (p.judged && p.answers[i]) ? '<div style="font-size:15px;color:' + (p.answers[i].correct ? '#2E7D32' : '#C62828') + '">' + (p.answers[i].correct ? '✅ 正确' : '❌ 正确答案 ' + this._h(eq.result)) + '</div>' : '';
       const kept = (p.judged && p.answers[i]) ? this._h(String(p.answers[i].val || '')) : '';
       html += '<div class="math-card" style="padding:14px 16px;margin-bottom:10px">';
@@ -15645,4 +15653,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260829-1710';
+window.__SERVER_VER = '20260829-1711';
