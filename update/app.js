@@ -643,6 +643,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       else if (w2.indexOf('m:') === 0) { s = 'math'; w2 = w2.slice(2); }
       if (s !== subject) return;
       if (subject === 'chinese') push({ zi: w2.trim(), pinyin: '', yi: '' });
+      else if (subject === 'math') push({ en: w2.trim(), cn: '' });
       else {
         const hit = this._enLookup(w2);
         if (hit) push(hit); else push({ en: w2.trim(), cn: '' });
@@ -1310,7 +1311,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div class="daily-modes math-mode-grid">';
     const modes = [
       { k: 'oral', icon: '🧮', t: '口算速练', d: '随机口算自动判分', color: '#1E88E5' },
-      { k: 'memorize', icon: '📋', t: '口诀竞答', d: '看算式选口诀', color: '#5C6BC0' },
+      { k: 'paper', icon: '📝', t: '口算作业', d: '整卷作答自动判分', color: '#5C6BC0' },
       { k: 'wrong', icon: '❌', t: '错题重练', d: '攻克薄弱点', color: '#E57373' },
       { k: 'challenge', icon: '🎯', t: '闯关挑战', d: '限时冲高分', color: '#FF9800' },
       { k: 'pattern', icon: '🔢', t: '数字规律', d: '找规律填数', color: '#00BFA5' },
@@ -1331,7 +1332,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       btn.addEventListener('click', () => {
         const k = btn.dataset.k;
         if (k === 'oral') this.startMathOral();
-        else if (k === 'memorize') this.startMathMemorize();
+        else if (k === 'paper') this.startMathPaper();
         else if (k === 'wrong') this.startMathWrongReview();
         else if (k === 'challenge') this.startMathChallenge();
         else if (k === 'pattern') this.startMathPattern();
@@ -2200,6 +2201,31 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     if (op === '÷' || op === 'x' || op === 'X' || op === '*') op = '×';
     return { a: parseFloat(m[1]), op: op, b: parseFloat(m[3]), result: parseFloat(m[4]) };
   },
+  // 宽松解析口算题：'数字 op 数字'、'数字 op 数字='、'数字 op 数字=数字/？' 均接受（口算作业整卷 + 批阅补全算式用）
+  _mathOpenEq(en, answer) {
+    const s = String(en || '').replace(/…….*$/, '').replace(/\s+/g, '');
+    const m = /^(-?\d+(?:\.\d+)?)([+\-×÷xX*])(-?\d+(?:\.\d+)?)(?:=(.*))?$/.exec(s);
+    if (!m) return null;
+    let op = m[2];
+    if (op === '÷' || op === 'x' || op === 'X' || op === '*') op = '×';
+    const a = parseFloat(m[1]);
+    const b = parseFloat(m[3]);
+    let result = NaN;
+    if (m[4] !== undefined && String(m[4]).trim() !== '') {
+      const r = String(m[4]).trim().replace(/[?？]+$/, '');
+      if (/^-?\d+(?:\.\d+)?$/.test(r)) result = parseFloat(r);
+    }
+    if (isNaN(result) && answer != null && String(answer).trim() !== '') {
+      const ra = String(answer).trim().replace(/[?？]+$/, '');
+      if (/^-?\d+(?:\.\d+)?$/.test(ra)) result = parseFloat(ra);
+    }
+    if (isNaN(result)) {
+      result = this._mathCalc(a, op, b);
+      if (isFinite(result)) result = Math.round(result * 1000) / 1000;
+    }
+    if (isNaN(result)) return null;
+    return { a: a, op: op, b: b, result: result };
+  },
   // 是否可当口算/填空的算式词（en 解析成功）
   _mathIsEquation(w) { return this._mathParseEn(w && w.en) != null; },
   // 是否口诀词（en 是算式，cn 是中文口诀）
@@ -2527,6 +2553,116 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<h2 style="color:#0D47A1">口算速练完成！</h2>';
     html += '<div style="font-size:20px;margin:16px 0">答对 ' + ok + ' / ' + total + ' 题 · ' + pct + '%</div>';
     html += '<div style="font-size:24px;letter-spacing:4px">' + '⭐'.repeat(stars) + '☆'.repeat(3 - stars) + '</div>';
+    html += '</div>';
+    document.getElementById('main-content').innerHTML = html;
+  },
+
+  // 📝 口算作业：老师手动布置的口算题整卷作答，本地交卷自动判分
+  startMathPaper() {
+    const words = this._getMathDailyWords();
+    const items = [];
+    const seen = {};
+    (words || []).forEach(w => {
+      const eq = this._mathOpenEq(w && w.en);
+      if (!eq) return;
+      const key = eq.a + '|' + eq.op + '|' + eq.b;
+      if (seen[key]) return;
+      seen[key] = 1;
+      items.push({ en: String(w && w.en || '').trim(), eq: eq, cn: String(w && w.cn || '').trim() });
+    });
+    if (!items.length) { alert('本次数学作业中没有可计算的口算题，请老师布置算式'); this.renderMathDailyModes(); return; }
+    this._mathPaper = { items: items, answers: {}, judged: false, score: 0 };
+    this.activeSessionId = Storage.startSession('mathPaper', 0, '每天必练·数学·口算作业', '', { subject: 'math', totalItems: items.length });
+    this._renderMathPaper();
+  },
+  _renderMathPaper() {
+    const p = this._mathPaper;
+    const main = document.getElementById('main-content');
+    let html = '<div class="math-container">';
+    html += '<button class="back-btn" onclick="App._mathPaperCleanup();App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<h2 class="course-title">📝 口算作业</h2>';
+    html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">共 ' + p.items.length + ' 题 · 直接在下方作答，交卷后自动判分</div>';
+    html += '<button class="login-btn" id="math-paper-speak" style="display:block;margin:0 auto 14px">🔊 朗读全部题目</button>';
+    html += '<div style="padding:0 4px">';
+    p.items.forEach((it, i) => {
+      const eq = it.eq;
+      const disp = this._h(eq.a) + ' ' + this._h(this._mathOpZh(eq.op)) + ' ' + this._h(eq.b) + ' = ?';
+      const fbR = (p.judged && p.answers[i]) ? '<div style="font-size:15px;color:' + (p.answers[i].correct ? '#2E7D32' : '#C62828') + '">' + (p.answers[i].correct ? '✅ 正确' : '❌ 正确答案 ' + this._h(eq.result)) + '</div>' : '';
+      html += '<div class="math-card" style="padding:14px 16px;margin-bottom:10px">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between">';
+      html += '<div style="flex:1;font-size:20px;font-weight:700;color:#0D47A1;letter-spacing:2px">' + (i + 1) + '. ' + disp + '</div>';
+      html += '<input type="number" id="mp-in-' + i + '" class="fill-input" style="width:110px;font-size:22px;text-align:center" inputmode="decimal" placeholder="答案"' + (p.judged ? ' disabled' : '') + '>';
+      html += '</div>';
+      html += '<div id="mp-fb-' + i + '" style="min-height:22px;font-size:14px;margin-top:6px">' + fbR + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<div style="text-align:center;margin-top:10px">';
+    if (!p.judged) html += '<button class="submit-btn" id="math-paper-submit" style="width:100%">✔️ 交卷判分</button>';
+    else {
+      html += '<div style="font-size:20px;color:#0D47A1;margin:8px 0">答对 ' + p.score + ' / ' + p.items.length + ' 题</div>';
+      html += '<button class="continue-btn" id="math-paper-done" style="width:100%">完成 · 结算成绩 ✓</button>';
+    }
+    html += '</div>';
+    html += '</div>';
+    main.innerHTML = html;
+
+    document.getElementById('math-paper-speak').addEventListener('click', () => {
+      this.speakChinese(p.items.map(it => this._mathExprZhQ(it.eq)).join('，'));
+    });
+    if (!p.judged) {
+      document.getElementById('math-paper-submit').addEventListener('click', () => this._mathPaperJudge());
+    } else {
+      document.getElementById('math-paper-done').addEventListener('click', () => { this._mathPaperCleanup(); this._mathPaperFinish(); });
+    }
+    this.updateTopBar();
+  },
+  _mathPaperJudge() {
+    const p = this._mathPaper;
+    if (!p || p.judged) return;
+    let filled = 0;
+    p.items.forEach((it, i) => {
+      const inp = document.getElementById('mp-in-' + i);
+      if (inp && String(inp.value || '').trim() !== '') filled++;
+    });
+    let ok = 0;
+    p.items.forEach((it, i) => {
+      const inp = document.getElementById('mp-in-' + i);
+      const val = parseFloat(inp ? inp.value : '');
+      const correct = filled > 0 && !isNaN(val) && Math.abs(val - it.eq.result) < 0.001;
+      if (correct) ok++;
+      p.answers[i] = { val: inp ? inp.value : '', correct: correct };
+      if (!correct) {
+        this.stopSpeaking();
+        Storage.addWrongWord(it.en, it.cn, 0, '每天必练·数学·口算作业', 'math');
+      }
+    });
+    p.judged = true;
+    p.score = ok;
+    this._renderMathPaper();
+  },
+  _mathPaperCleanup() { this._mathPaper = null; this.stopSpeaking(); },
+  _mathPaperFinish() {
+    const p = this._mathPaper;
+    const total = p ? p.items.length : 1;
+    const ok = p ? p.score : 0;
+    const pct = total ? Math.round(ok / total * 100) : 0;
+    const stars = pct >= 90 ? 3 : (pct >= 60 ? 2 : 1);
+    if (this.activeSessionId) {
+      try {
+        Storage.endSession(this.activeSessionId, { correctCount: ok, wrongCount: total - ok, totalItems: total, accuracy: pct, stars: stars, xp: ok * 5 });
+        this.activeSessionId = null;
+        this._autoPushReport();
+      } catch (e) {}
+    }
+    this._saveMathModeProgress('paper', stars);
+    let html = '<div class="math-container" style="text-align:center;padding:40px 20px">';
+    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<div style="font-size:52px">' + (pct >= 90 ? '🏆' : (pct >= 60 ? '👍' : '💪')) + '</div>';
+    html += '<h2 style="color:#0D47A1">口算作业完成！</h2>';
+    html += '<div style="font-size:20px;margin:16px 0">答对 ' + ok + ' / ' + total + ' 题 · ' + pct + '%</div>';
+    html += '<div style="font-size:24px;letter-spacing:4px">' + '⭐'.repeat(stars) + '☆'.repeat(3 - stars) + '</div>';
+    html += '<div style="font-size:13px;color:#666;margin-top:10px">错题已自动加入「错题重练」</div>';
     html += '</div>';
     document.getElementById('main-content').innerHTML = html;
   },
@@ -5001,19 +5137,12 @@ main.innerHTML = html;
   _hwAddManual() {
     const st = this._hwEditor;
     const input = document.getElementById('hw-manual-input');
-    const bank = this._getWordBank();
     const itemName = st.subject === 'chinese' ? '汉字' : st.subject === 'math' ? '算式/口诀' : '单词';
     const raw = (input.value || '').split(/[,，;；\s]+/).map(s => s.trim()).filter(s => s.length > 0);
     if (raw.length === 0) { st.lastMsg = '<span style="color:#C62828">请输入' + itemName + '</span>'; this._renderHomeworkEditorUI(); return; }
     let added = 0;
-    const badWords = [];
     raw.forEach(w => {
-      const key = String(w).toLowerCase();
       if (st.manual.indexOf(w) !== -1) return;
-      if (!bank[key]) {
-        st.manualNotInBank[w] = true;
-        badWords.push(w);
-      }
       st.manual.push(w);
       added++;
     });
@@ -5022,9 +5151,7 @@ main.innerHTML = html;
       this._renderHomeworkEditorUI();
       return;
     }
-    st.lastMsg = badWords.length > 0
-      ? '<span style="color:#C62828">⚠️ 有 ' + badWords.length + ' 项不在教材词库中（可能输入有误）：' + badWords.map(w => this._h(w)).join('、') + '，已标红，请核对</span>'
-      : '<span style="color:#2E7D32">✅ 已添加 ' + added + ' 项，已通过词库校验</span>';
+    st.lastMsg = '<span style="color:#2E7D32">✅ 已添加 ' + added + ' 项（手动内容不限教材词库）</span>';
     input.value = '';
     this._renderHomeworkEditorUI();
   },
@@ -5760,17 +5887,19 @@ const name = s2 ? s2.name : '';
     return subject === 'english' ? '英语' : subject === 'chinese' ? '语文' : subject === 'math' ? '数学' : subject;
   },
 
-  // 数学口算题显示完整算式：如题面 "7+5=" + 我的答案 "12" → "7+5=12"
+  // 数学口算题显示完整算式：题面 "7+5=" / "7+5" / 已答 → "7+5=12"（标准答案优先，其次我的答案）
   _mathTaskFullEq(t) {
     const s = String(t ? t.text : '').trim();
     if (!s) return '';
     if (this._mathParseEn(s)) return s; // 题面已是完整算式（含结果）
-    const ma = String(t ? t.myAnswer : '').trim();
+    const ma = String(t ? t.answer || t.myAnswer : '').trim();
+    const eq = this._mathOpenEq(s, ma ? ma : undefined);
+    if (eq) return String(eq.a) + eq.op + String(eq.b) + '=' + String(eq.result);
     if (!/[0-9]/.test(ma)) return s; // 学员未填数字答案，保持原题面
     const base = s.replace(/=\s*\?*\s*$/, '').replace(/\s+$/, '');
     if (base === s || base.length === 0) {
       // 题面不含等号：直接补 "=答案"（仅当含四则运算符时）
-      return /[+\-×÷]/.test(s) ? s + '=' + ma : s;
+      return /[+\-×÷xX*]/.test(s) ? s + '=' + ma : s;
     }
     return base + '=' + ma;
   },
@@ -14821,7 +14950,7 @@ _ttsCancel() {
         if (seen.indexOf(fp) >= 0) return;
         tasks.push({
           id: String(g.taskId),
-          subject: g.subject || '',
+          subject: g.subject || this._inferTaskSubject(g.text),
           text: g.text,
           note: '',
           answer: g.answer || '',
@@ -14842,6 +14971,13 @@ _ttsCancel() {
       try { localStorage.setItem('pjyx_graded_handled', JSON.stringify(seen)); } catch (e) {}
     }
     return n;
+  },
+
+  _inferTaskSubject(text) {
+    const s = String(text || '').trim();
+    if (!s) return 'english';
+    if (this._mathOpenEq(s) || /^\s*[-+]?\d+(?:\.\d+)?\s*$/.test(s)) return 'math';
+    return /[\u4e00-\u9fff]/.test(s) ? 'chinese' : 'english';
   },
 
   _isTaskSubmitted(id) {
@@ -15077,7 +15213,7 @@ _renderTeacherTasks() {
           html += '<div class="asc-item" style="align-items:flex-start;padding:6px 10px"' + (t.done ? ' style="opacity:.6"' : '') + '>';
           html += '<div style="flex:1">';
           html += '<div style="font-size:12px;color:#8D6E63">[' + this._subjName(t.subject) + ']</div>';
-          html += '<div style="font-size:14px;white-space:pre-wrap">' + (t.subject === 'math' && t.graded ? this._h(this._mathTaskFullEq(t)) : this._h(t.text)) + '</div>';
+          html += '<div style="font-size:14px;white-space:pre-wrap">' + (t.subject === 'math' ? this._h(this._mathTaskFullEq(t)) : this._h(t.text)) + '</div>';
           if (t.note && !t.done) html += '<div style="font-size:11px;color:#1565C0;margin-top:2px">📘 ' + this._h(t.note) + '</div>';
           if (t.graded) {
             if (t.correct) {
@@ -15512,4 +15648,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260829-1708';
+window.__SERVER_VER = '20260829-1709';
