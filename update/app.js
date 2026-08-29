@@ -644,12 +644,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       if (w2.indexOf('c:') === 0) { s = 'chinese'; w2 = w2.slice(2); }
       else if (w2.indexOf('m:') === 0) { s = 'math'; w2 = w2.slice(2); }
       if (s !== subject) return;
-      if (subject === 'chinese') push({ zi: w2.trim(), pinyin: '', yi: '' });
-      else if (subject === 'math') push({ en: w2.trim(), cn: '' });
-      else {
-        const hit = this._enLookup(w2);
-        if (hit) push(hit); else push({ en: w2.trim(), cn: '' });
-      }
+      w2.split(/[,，;；\s]+/).map(x => x.trim()).filter(x => x.length > 0).forEach(part => {
+        if (subject === 'chinese') push({ zi: part, pinyin: '', yi: '' });
+        else if (subject === 'math') push({ en: part, cn: '' });
+        else {
+          const hit = this._enLookup(part);
+          if (hit) push(hit); else push({ en: part, cn: '' });
+        }
+      });
     });
     return out;
   },
@@ -1416,13 +1418,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div class="math-card" style="padding:24px;text-align:center">';
     if (isKoujue) {
       html += '<div style="font-size:15px;color:#666;margin-bottom:8px">看算式，选出正确的口诀</div>';
-      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(eq.a) + ' ' + this._mathOpSym(eq.op) + ' ' + this._h(eq.b) + ' = ' + this._h(eq.result) + '</div>';
+      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(this._mathExprDisp(eq)) + ' = ' + this._h(eq.result) + '</div>';
       const opts = this._mathMemKoujueOpts(st, st.idx);
       html += '<div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">' + opts.map((o, i) => '<button class="math-opt-btn math-mem-kj" data-oi="' + i + '"' + (st.answered ? ' disabled' : '') + '>' + this._h(o) + '</button>').join('') + '</div>';
       html += '<div id="math-mem-fb" style="margin-top:14px;min-height:24px"></div>';
     } else {
       html += '<div style="font-size:15px;color:#666;margin-bottom:8px">计算并填写答案</div>';
-      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(eq ? eq.a : this._mathDisp(w.en)) + (eq ? ' ' + this._mathOpSym(eq.op) + ' ' + this._h(eq.b) : '') + ' ' + (eq ? '= ?' : String(w.cn || '')) + '</div>';
+      const eqDisp = eq ? this._mathExprDisp(eq) : this._mathDisp(w.en);
+      html += '<div style="font-size:40px;font-weight:700;color:#0D47A1;letter-spacing:3px">' + this._h(eqDisp) + (eq ? ' = ?' : String(w.cn || '')) + '</div>';
       html += '<input type="number" id="math-mem-input" class="fill-input" style="font-size:28px;text-align:center;width:150px;margin-top:12px" placeholder="?" ' + (st.answered ? 'disabled' : '') + '>';
       html += '<div style="margin-top:10px"><button class="submit-btn" id="math-mem-submit" ' + (st.answered ? 'disabled' : '') + '>确认</button></div>';
       html += '<div id="math-mem-fb" style="margin-top:14px;min-height:24px"></div>';
@@ -1769,7 +1772,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
 
   // 按题型生成与题目匹配的候选答案（正确项=ans，干扰项与答案同为一种类型，杜绝"题目与候选答案不匹配"）
   _mathWordKind(w) {
-    if (this._mathParseEn(w && w.en)) return /[\u4e00-\u9fff]/.test(String(w && w.cn || '')) ? 'koujue' : 'eqnum';
+    if (this._mathParseEn(w && w.en) || this._mathOpenEq(w && w.en)) return /[\u4e00-\u9fff]/.test(String(w && w.cn || '')) ? 'koujue' : 'eqnum';
     return 'concept';
   },
   _mathBuildOpts(ans, allWords, cur) {
@@ -1781,7 +1784,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       if (w === cur) return;
       if (this._mathWordKind(w) !== kind) return; // 只从同题型词里取干扰项
       let o = null;
-      if (kind === 'eqnum') { const e = this._mathParseEn(w.en); o = String(e.result); }
+      if (kind === 'eqnum') { const e = this._mathParseEn(w.en) || this._mathOpenEq(w.en); o = e ? String(e.result) : ''; }
       else if (kind === 'koujue') { o = String(w.cn).trim(); }
       else { o = String(w.cn || '').trim() || String(w.en || '').trim(); }
       if (o && o !== ans && !seen[o]) { seen[o] = 1; pool.push(o); }
@@ -1798,10 +1801,10 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
   // 判定题型并生成匹配的题目/答案/候选项：算式词(含口诀)与概念词分开处理
   _mathChallengeItem(w, allWords) {
-    const eq = this._mathParseEn(w.en);
+    const eq = this._mathParseEn(w.en) || this._mathOpenEq(w.en);
     if (eq) {
       const isKoujue = /[\u4e00-\u9fff]/.test(String(w.cn || ''));
-      const q = this._h(eq.a) + ' ' + this._mathOpSym(eq.op) + ' ' + this._h(eq.b) + ' = ?';
+      const q = this._h(this._mathExprDisp(eq)) + ' = ?';
       const ans = isKoujue ? String(w.cn || '').trim() : String(eq.result);
       return { q: q, ans: ans, kind: isKoujue ? 'koujue' : 'eqnum', opts: this._mathBuildOpts(ans, allWords, w) };
     }
@@ -1939,7 +1942,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       for (var j = i + 1; j < words.length && pairs.length < 10; j++) {
         var a = words[i], b = words[j];
         var ea = self._mathParseEn(a.en), eb = self._mathParseEn(b.en);
-        if (!ea || !eb) continue;
+        if (!ea || ea.chain || !eb || eb.chain) continue;
         var aMul = ea.op === '×' || ea.op === '÷';
         var bMul = eb.op === '×' || eb.op === '÷';
         if (aMul !== bMul) {
@@ -2197,36 +2200,86 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   // 解析 en 为纯算式：'数字 op 数字 = 数字' → {a,op,b,result}；否则 null（概念/公式词）
   _mathParseEn(en) {
     const s = String(en || '').replace(/…….*$/, '').replace(/\s+/g, '');
-    const m = /^(-?\d+(?:\.\d+)?)([+\-×÷÷xX*])(-?\d+(?:\.\d+)?)=(-?\d+(?:\.\d+)?)$/.exec(s);
-    if (!m) return null;
-    let op = m[2];
-    if (op === '÷' || op === 'x' || op === 'X' || op === '*') op = '×';
-    return { a: parseFloat(m[1]), op: op, b: parseFloat(m[3]), result: parseFloat(m[4]) };
+    const m = /^(-?\d+(?:\.\d+)?)([+\-×÷xX*])(-?\d+(?:\.\d+)?)=(-?\d+(?:\.\d+)?)$/.exec(s);
+    if (m) {
+      let op = m[2];
+      if (op === 'x' || op === 'X' || op === '*') op = '×';
+      return { a: parseFloat(m[1]), op: op, b: parseFloat(m[3]), result: parseFloat(m[4]) };
+    }
+    // 混合运算链：expr=result（如 9÷3×2+1-2=5），a/op/b 取首项兼容旧调用方，chain 标记 + tokens 保留全链
+    const eqIdx = s.indexOf('=');
+    if (eqIdx <= 0) return null;
+    const expr = s.slice(0, eqIdx);
+    const rhs = s.slice(eqIdx + 1).trim();
+    if (!/^-?\d+(?:\.\d+)?$/.test(rhs)) return null;
+    const tokens = this._mathTokenize(expr);
+    if (!tokens || tokens.length < 5) return null;
+    return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: parseFloat(rhs), chain: true, tokens: tokens };
   },
-  // 宽松解析口算题：'数字 op 数字'、'数字 op 数字='、'数字 op 数字=数字/？' 均接受（口算作业整卷 + 批阅补全算式用）
+  // 宽松解析口算题：'数字 op 数字'、'数字 op 数字='、'数字 op 数字=数字/？'、混合运算链 'a op b op c...(=r|?)' 均接受（口算作业整卷 + 批阅补全算式用）
   _mathOpenEq(en, answer) {
     const s = String(en || '').replace(/…….*$/, '').replace(/\s+/g, '');
-    const m = /^(-?\d+(?:\.\d+)?)([+\-×÷xX*])(-?\d+(?:\.\d+)?)(?:=(.*))?$/.exec(s);
-    if (!m) return null;
-    let op = m[2];
-    if (op === '÷' || op === 'x' || op === 'X' || op === '*') op = '×';
-    const a = parseFloat(m[1]);
-    const b = parseFloat(m[3]);
-    let result = NaN;
-    if (m[4] !== undefined && String(m[4]).trim() !== '') {
-      const r = String(m[4]).trim().replace(/[?？]+$/, '');
-      if (/^-?\d+(?:\.\d+)?$/.test(r)) result = parseFloat(r);
+    const eqIdx = s.indexOf('=');
+    let expr = s, given = NaN;
+    if (eqIdx >= 0) {
+      expr = s.slice(0, eqIdx);
+      const rhs = s.slice(eqIdx + 1).replace(/[?？]+$/, '').trim();
+      if (rhs !== '' && /^-?\d+(?:\.\d+)?$/.test(rhs)) given = parseFloat(rhs);
     }
+    const tokens = this._mathTokenize(expr);
+    if (!tokens) return null;
+    let result = given;
     if (isNaN(result) && answer != null && String(answer).trim() !== '') {
       const ra = String(answer).trim().replace(/[?？]+$/, '');
       if (/^-?\d+(?:\.\d+)?$/.test(ra)) result = parseFloat(ra);
     }
-    if (isNaN(result)) {
-      result = this._mathCalc(a, op, b);
-      if (isFinite(result)) result = Math.round(result * 1000) / 1000;
-    }
+    if (isNaN(result)) result = this._mathEvalTokens(tokens);
     if (isNaN(result)) return null;
-    return { a: a, op: op, b: b, result: result };
+    if (tokens.length === 3) return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: result };
+    return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: result, chain: true, tokens: tokens };
+  },
+  // 把算式串切成 tokens（数字/操作符交替），支持混合运算链；非法字符/未闭合一律返回 null
+  _mathTokenize(s) {
+    const str = String(s || '').replace(/…….*$/, '').replace(/\s+/g, '');
+    if (!str) return null;
+    const tokens = [];
+    let rest = str;
+    const numRe = /^-?\d+(?:\.\d+)?/;
+    const opRe = /^[+\-×÷xX*]/;
+    let nm = numRe.exec(rest);
+    if (!nm) return null;
+    tokens.push({ t: 'n', v: parseFloat(nm[0]) });
+    rest = rest.slice(nm[0].length);
+    while (rest.length > 0) {
+      const om = opRe.exec(rest);
+      if (!om) return null;
+      let op = om[0];
+      if (op === 'x' || op === 'X' || op === '*') op = '×';
+      tokens.push({ t: 'op', s: op });
+      rest = rest.slice(1);
+      const nm2 = numRe.exec(rest);
+      if (!nm2) return null;
+      tokens.push({ t: 'n', v: parseFloat(nm2[0]) });
+      rest = rest.slice(nm2[0].length);
+    }
+    if (tokens[tokens.length - 1].t === 'op') return null;
+    return tokens;
+  },
+  // 按运算优先级求值混合运算链（乘除同级先算→加减），结果四舍五入 3 位防浮点尾
+  _mathEvalTokens(tokens) {
+    if (!tokens || tokens.length < 3) return NaN;
+    const nums = [tokens[0].v];
+    const ops = [];
+    for (let i = 1; i < tokens.length; i += 2) {
+      const op = tokens[i].s;
+      const num = tokens[i + 1].v;
+      if (op === '×' || op === '÷') nums[nums.length - 1] = this._mathCalc(nums[nums.length - 1], op, num);
+      else { ops.push(op); nums.push(num); }
+    }
+    let res = nums[0];
+    for (let i = 0; i < ops.length; i++) res = this._mathCalc(res, ops[i], nums[i + 1]);
+    if (!isFinite(res)) return NaN;
+    return Math.round(res * 1000) / 1000;
   },
   // 是否可当口算/填空的算式词（en 解析成功）
   _mathIsEquation(w) { return this._mathParseEn(w && w.en) != null; },
@@ -2278,26 +2331,54 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     }
     return (neg ? '负' : '') + out;
   },
-  // 算式中文读法：如 3+5=8 → "三加五等于八"；1×5=5 → "一乘五等于五"
+  // 算式中文读法：如 3+5=8 → "三加五等于八"；1×5=5 → "一乘五等于五"；混合链 → "九除以三乘二加一减二等于五"
   _mathExprZh(eq) {
-    return this._mathNumCn(eq.a) + this._mathOpZh(eq.op) + this._mathNumCn(eq.b) + '等于' + this._mathNumCn(eq.result);
+    return this._mathExprZhStr(eq, true);
   },
-  // 读题用（不念答案）：如 1×7=? → "一乘七等于多少"（填空/口算读题，避免泄题）
+  // 读题用（不念答案）：如 1×7=? → "一乘七等于多少"（填空/口算读题，避免泄题）；混合链同理"……等于多少"
   _mathExprZhQ(eq) {
-    return this._mathNumCn(eq.a) + this._mathOpZh(eq.op) + this._mathNumCn(eq.b) + '等于多少';
+    return this._mathExprZhStr(eq, false);
+  },
+  _mathExprZhStr(eq, withResult) {
+    let s = '';
+    if (eq && eq.tokens) {
+      eq.tokens.forEach(t => { s += t.t === 'n' ? this._mathNumCn(t.v) : this._mathOpZh(t.s); });
+    } else {
+      s = this._mathNumCn(eq.a) + this._mathOpZh(eq.op) + this._mathNumCn(eq.b);
+    }
+    return s + (withResult ? '等于' + this._mathNumCn(eq.result) : '等于多少');
+  },
+  // 题面符号显示串（混合链/单步通用）：如 "9 ÷ 3 × 2 + 1 - 2"（不含等号）
+  _mathExprDisp(eq) {
+    if (eq && eq.tokens) {
+      let s = '';
+      eq.tokens.forEach(t => { s += t.t === 'n' ? String(t.v) : (' ' + t.s + ' '); });
+      return s;
+    }
+    return String(eq.a) + ' ' + this._mathOpSym(eq.op) + ' ' + String(eq.b);
+  },
+  // 紧凑算式串（无空格，批阅补全/去重用）：如 "9÷3×2+1-2"
+  _mathExprCompact(eq) {
+    if (eq && eq.tokens) {
+      let s = '';
+      eq.tokens.forEach(t => { s += t.t === 'n' ? String(t.v) : this._mathOpSym(t.s); });
+      return s;
+    }
+    return String(eq.a) + this._mathOpSym(eq.op) + String(eq.b);
   },
   // 从数学词/兜底集生成口算题（返回 {a,op,b,result,阶})
   _mathGenArith(pool, limit) {
     const out = [];
     const seen = {};
     const push = (eq) => {
-      const key = eq.a + eq.op + eq.b + '=' + eq.result;
+      const key = this._mathExprCompact(eq);
       if (seen[key]) return;
       seen[key] = 1;
       out.push(eq);
     };
     (pool || []).forEach(w => {
-      const eq = this._mathParseEn(w.en);
+      let eq = this._mathParseEn(w.en);
+      if (!eq) eq = this._mathOpenEq(w.en);
       if (eq) push(eq);
     });
     // 未达数量用基础四则模板补齐（覆盖口算速练无算式词的情形）
@@ -2359,9 +2440,9 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div style="text-align:center;margin:8px 0;font-size:13px;color:var(--text-light)">第 ' + (st.idx + 1) + ' / ' + st.total + ' 题 · 答对 ' + st.score + '</div>';
     html += '<button class="login-btn" id="math-lesson-speak" style="display:block;margin:0 auto 14px">🔊 读题</button>';
     if (ex.type === 'fill') {
-      const opsym = this._mathOpSym(eq.op);
+      const eqDisp = this._mathExprDisp(eq);
       html += '<div class="math-card" style="padding:30px;text-align:center">';
-      html += '<div style="font-size:44px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(eq.a) + ' ' + opsym + ' ' + this._h(eq.b) + ' = <span id="ml-ans">?</span></div>';
+      html += '<div style="font-size:44px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(eqDisp) + ' = <span id="ml-ans">?</span></div>';
       html += '<div style="margin-top:16px;font-size:14px;color:#666">请填写答案</div>';
       html += '<input type="number" id="math-fill-input" class="fill-input" style="font-size:28px;text-align:center;width:140px" placeholder="?" ' + (st.answered ? 'disabled' : '') + '>';
       html += '</div>';
@@ -2497,7 +2578,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _renderMathOral() {
     const st = this._mathOral;
     const q = st.qs[st.idx];
-    const opsym = this._mathOpSym(q.op);
+    const eqDisp = this._mathExprDisp(q);
     const main = document.getElementById('main-content');
     let html = '<div class="math-container">';
     html += '<button class="back-btn" onclick="App._mathOralCleanup();App.renderMathDailyModes()">← 返回数学作业</button>';
@@ -2505,7 +2586,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div style="text-align:center;margin:8px 0;font-size:13px;color:var(--text-light)">' + (st.idx + 1) + ' / ' + st.qs.length + ' 题 · 答对 ' + st.score + '</div>';
     html += '<button class="login-btn" id="math-oral-speak" style="display:block;margin:0 auto 14px">🔊 读题</button>';
     html += '<div class="math-card" style="padding:30px;text-align:center">';
-    html += '<div style="font-size:46px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(q.a) + ' ' + opsym + ' ' + this._h(q.b) + ' = ?</div>';
+    html += '<div style="font-size:46px;font-weight:700;color:#0D47A1;letter-spacing:4px">' + this._h(eqDisp) + ' = ?</div>';
     html += '<input type="number" id="math-oral-input" class="fill-input" style="font-size:30px;text-align:center;width:150px;margin-top:12px" placeholder="?" ' + (st.answered ? 'disabled' : '') + '>';
     html += '</div>';
     html += '<button class="submit-btn" id="math-oral-submit" ' + (st.answered ? 'disabled' : '') + '>确认</button>';
@@ -2575,7 +2656,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     (words || []).forEach(w => {
       const eq = this._mathOpenEq(w && w.en);
       if (!eq) return;
-      const key = eq.a + '|' + eq.op + '|' + eq.b;
+      const key = this._mathExprCompact(eq);
       if (seen[key]) return;
       seen[key] = 1;
       items.push({ en: String(w && w.en || '').trim(), eq: eq, cn: String(w && w.cn || '').trim() });
@@ -2595,7 +2676,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<div style="padding:0 4px">';
     p.items.forEach((it, i) => {
       const eq = it.eq;
-      const disp = this._h(eq.a) + ' ' + this._h(this._mathOpSym(eq.op)) + ' ' + this._h(eq.b) + ' = ?';
+      const disp = this._h(this._mathExprDisp(eq)) + ' = ?';
       const fbR = (p.judged && p.answers[i]) ? '<div style="font-size:15px;color:' + (p.answers[i].correct ? '#2E7D32' : '#C62828') + '">' + (p.answers[i].correct ? '✅ 正确' : '❌ 正确答案 ' + this._h(eq.result)) + '</div>' : '';
       const kept = (p.judged && p.answers[i]) ? this._h(String(p.answers[i].val || '')) : '';
       html += '<div class="math-card" style="padding:14px 16px;margin-bottom:10px">';
@@ -5933,7 +6014,7 @@ const name = s2 ? s2.name : '';
     if (this._mathParseEn(s)) return s; // 题面已是完整算式（含结果）
     const ma = String(t ? t.answer || t.myAnswer : '').trim();
     const eq = this._mathOpenEq(s, ma ? ma : undefined);
-    if (eq) return String(eq.a) + eq.op + String(eq.b) + '=' + String(eq.result);
+    if (eq) return this._mathExprCompact(eq) + '=' + String(eq.result);
     if (!/[0-9]/.test(ma)) return s; // 学员未填数字答案，保持原题面
     const base = s.replace(/=\s*\?*\s*$/, '').replace(/\s+$/, '');
     if (base === s || base.length === 0) {
@@ -15724,4 +15805,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260829-1713';
+window.__SERVER_VER = '20260830-1714';
