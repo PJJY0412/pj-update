@@ -631,12 +631,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       const sep = k2.indexOf(':');
       if (sep <= 0) return;
       const uid = parseInt(k2.slice(0, sep));
-      const word = k2.slice(sep + 1);
+      const rawWord = k2.slice(sep + 1);
       const info = this._findSubjectUnit(s, uid);
-      if (info && info.words) {
-        const w = info.words.find(x => kw(x) === word);
-        if (w) push(w);
-      }
+      let hit = null;
+      if (info && info.words) hit = info.words.find(x => kw(x) === rawWord);
+      if (hit) { push(hit); return; }
+      if (subject === 'chinese') push({ zi: rawWord, pinyin: '', yi: '' });
+      else push({ en: rawWord, cn: '' });
     });
     (hw.manual || []).forEach(word => {
       let s = subject;
@@ -15805,4 +15806,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260830-1714';
+window.__SERVER_VER = '20260830-1715';
