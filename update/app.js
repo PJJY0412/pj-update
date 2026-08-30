@@ -1516,13 +1516,24 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
 
   // ❌ 错题重练
   startMathWrongReview() {
+    const sid = this.currentStudent ? this.currentStudent.id : '';
     const words = this._getMathDailyWords();
-    if (!words.length) { this.renderMathDailyModes(); return; }
-    const wrongEn = (Storage.getWrongWords(this.currentStudent ? this.currentStudent.id : '') || []).map(x => String(x.wordEn || '').trim());
+    const wrongEn = (Storage.getWrongWords(sid) || []).map(x => String(x.wordEn || '').trim());
     const wrongWords = words.filter(w => wrongEn.indexOf(String(w.en || '').trim()) >= 0);
-    if (!wrongWords.length) { alert('没有数学错题，去闯关挑战吧！'); this.renderMathDailyModes(); return; }
+    // 错题本里的数学错题直接纳入复习（口算速练/口算作业的 fallback 题不在作业词里，仅靠上面的交集找不到）
+    const bank = [];
+    (Storage.getWrongWords(sid) || []).forEach(r => {
+      if (String(r.subject || '') !== 'math') return;
+      const ens = String(r.wordEn || '').trim();
+      if (!ens) return;
+      if (!this._mathParseEn(ens) && !this._mathOpenEq(ens)) return;
+      if (wrongWords.some(x => String(x.en || '').trim() === ens)) return;
+      bank.push({ en: ens, cn: String(r.wordCn || '').trim(), example: '上次做错的数学口算题' });
+    });
+    const all = wrongWords.concat(bank);
+    if (!all.length) { alert('没有数学错题，去闯关挑战吧！'); this.renderMathDailyModes(); return; }
     // 记录错因分析入口
-    this._mathWrongReview = { words: wrongWords, idx: 0, score: 0, reviewed: {} };
+    this._mathWrongReview = { words: all, idx: 0, score: 0, reviewed: {} };
     this._renderMathWrongReview();
   },
   _renderMathWrongReview() {
@@ -1582,6 +1593,24 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     html += '<button class="continue-btn" style="margin-top:20px" onclick="App.renderMathDailyModes()">返回菜单</button>';
     html += '</div></div>';
     document.getElementById('main-content').innerHTML = html;
+  },
+  // 错题重练四选一选项（答案=w.cn，干扰=同池 cn；2026-08-28 重做闯关/小测时误删本函数，1717 重建，勿回退成 undefined）
+  _mathGenOptions(w, pool) {
+    const ans = String((w && (w.cn || w.en)) || '').trim();
+    const opts = [ans];
+    const seen = {};
+    seen[ans] = 1;
+    (pool || []).forEach(x => {
+      if (opts.length >= 4) return;
+      if (x === w) return;
+      const o = String((x && (x.cn || x.en)) || '').trim();
+      if (o && o !== ans && !seen[o]) { seen[o] = 1; opts.push(o); }
+    });
+    const fb = ['一一得一', '二二得四', '三三得九', '五七三十五', '九九八十一', '三加五等于八', '十二减四等于八', '二乘三等于六'];
+    for (let i = 0; i < fb.length && opts.length < 4; i++) {
+      if (!seen[fb[i]]) { seen[fb[i]] = 1; opts.push(fb[i]); }
+    }
+    return this._shuffleArr(opts.map(o => ({ label: this._mathDisp(o), isCorrect: o === ans })));
   },
 
   // 🎯 闯关挑战
@@ -2614,6 +2643,10 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       input.disabled = true; submit.disabled = true;
       const fb = document.getElementById('math-oral-fb');
       if (fb) fb.innerHTML = '<div style="font-size:17px;text-align:center;color:' + (ok ? '#2E7D32' : '#C62828') + '">' + (ok ? '✅ 正确！' : '❌ 正确答案是 ' + this._h(q.result)) + '</div>';
+      if (!ok) {
+        this.stopSpeaking();
+        Storage.addWrongWord(this._mathExprCompact(q), this._mathExprZh(q), 0, '每天必练·数学·口算速练', 'math');
+      }
       this.speakChinese(ok ? '正确' : this._mathExprZh(q));
       document.getElementById('math-oral-next').disabled = false;
     };
@@ -2726,7 +2759,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       p.answers[i] = { val: inp ? inp.value : '', correct: correct };
       if (!correct) {
         this.stopSpeaking();
-        Storage.addWrongWord(it.en, it.cn, 0, '每天必练·数学·口算作业', 'math');
+        Storage.addWrongWord(it.en, String(it.cn || '').trim() || this._mathExprZh(it.eq), 0, '每天必练·数学·口算作业', 'math');
       }
     });
     p.judged = true;
@@ -15843,4 +15876,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260830-1716';
+window.__SERVER_VER = '20260831-1717';
