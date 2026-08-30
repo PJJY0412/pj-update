@@ -1137,6 +1137,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   renderDailyHome() {
+    this._curDailySubject = '';
     const main = document.getElementById('main-content');
     const sid = this.currentStudent.id;
     const cols = [
@@ -1242,6 +1243,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   renderZhDailyModes() {
+    this._curDailySubject = 'chinese';
     const main = document.getElementById('main-content');
     const words = this.getZhDailyWords();
     this.stopSpeaking();
@@ -1296,6 +1298,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
 
   // ===== 数学每天必练 =====
   renderMathDailyModes() {
+    this._curDailySubject = 'math';
     const main = document.getElementById('main-content');
     const words = this._getMathDailyWords();
     this.mathDailyWords = words;
@@ -3487,6 +3490,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   renderDailyPractice() {
+    this._curDailySubject = 'english';
     const main = document.getElementById('main-content');
     const hw = Storage.getHomework(this.currentStudent.id);
     const words = this.getHomeworkWords(hw);
@@ -14403,6 +14407,19 @@ _ttsCancel() {
       var lines = [];
       try { lines.push('环境: ' + (window.AndroidBackup ? '平板APK' : '网页版')); } catch (e) {}
       try {
+        var ver = (typeof __SERVER_VER !== 'undefined' ? __SERVER_VER : '') + '/' + (typeof __BUILTIN_VER !== 'undefined' ? __BUILTIN_VER : '');
+        if (ver !== '/') lines.push('版本: ' + ver);
+      } catch (e) {}
+      try {
+        const me = (Storage.getStudents() || []).find(s => String(s.id) === String(Storage.getStudent()));
+        lines.push('学员: ' + (me ? me.name + '(id=' + me.id + ')' : '未登录'));
+      } catch (e) {}
+      lines.push('LAN主机: ' + (this._getSavedHost() || '(未设置)'));
+      try {
+        const lg = JSON.parse(localStorage.getItem('pjyx_tasklog') || '[]') || [];
+        lines.push('作业接收日志(' + lg.length + '): ' + (lg.length ? lg.slice(-3).join(' ‖ ') : '(无)'));
+      } catch (e) {}
+      try {
         if (window.AndroidBackup && window.AndroidBackup.mediaVolume) lines.push('媒体音量: ' + window.AndroidBackup.mediaVolume());
       } catch (e) {}
       try {
@@ -15033,6 +15050,18 @@ _ttsCancel() {
     }
     if (r.applied > 0) {
       try { this._subjHomeworkRefresh && this._subjHomeworkRefresh(); } catch (e) {}
+      try {
+        const cur = this._curDailySubject;
+        const mc = document.getElementById('main-content');
+        const txt = mc ? (mc.textContent || '') : '';
+        if (txt.indexOf('还未布置') >= 0) {
+          if (cur === 'math') this.renderMathDailyModes();
+          else if (cur === 'chinese') this.renderZhDailyModes();
+          else if (cur === 'english') this.renderDailyPractice();
+        } else if (!cur && txt.indexOf('未布置') >= 0) {
+          this.renderDailyHome();
+        }
+      } catch (e) {}
     }
     try { this._updateTaskBadge(); } catch (e) {}
   },
@@ -15234,6 +15263,14 @@ _ttsCancel() {
       const el = document.getElementById('task-diag');
       if (el) el.textContent = this._taskDiag;
     } catch (e) {}
+    try {
+      let arr = [];
+      try { arr = JSON.parse(localStorage.getItem('pjyx_tasklog') || '[]') || []; } catch (e2) { arr = []; }
+      if (!Array.isArray(arr)) arr = [];
+      arr.push(new Date().toLocaleTimeString('zh-CN') + ' ' + msg);
+      if (arr.length > 60) arr = arr.slice(-60);
+      localStorage.setItem('pjyx_tasklog', JSON.stringify(arr));
+    } catch (e3) {}
   },
 
   _updateTaskBadge() {
@@ -15806,4 +15843,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260830-1715';
+window.__SERVER_VER = '20260830-1716';
