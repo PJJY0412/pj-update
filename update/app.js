@@ -603,6 +603,30 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     return null;
   },
 
+  // 数学手动项分隔：逗号/分号/换行必分；连续空格仅在"两侧都不是运算符(=或四则)"时才切分。
+  // 这样既能把 "7+2=9 4x5=20" 拆成两条，又不拆碎 "9 ÷ 3" / "1.5 + 2.5" / "5 - 7 = -2"（空格紧邻运算符=式内分隔符）。
+  _splitManualMath(str) {
+    const opRe = /[+\-×÷xX*=/]/;
+    const out = [];
+    String(str || '').split(/[,，;；\r\n]+/).forEach(seg => {
+      let cur = '';
+      for (let i = 0; i < seg.length; i++) {
+        const ch = seg[i];
+        if (/\s/.test(ch)) {
+          const prev = i > 0 ? seg[i - 1] : null;
+          const next = i < seg.length - 1 ? seg[i + 1] : null;
+          const prevOp = prev !== null && opRe.test(prev);
+          const nextOp = next !== null && opRe.test(next);
+          if (cur && !prevOp && !nextOp) { out.push(cur); cur = ''; }
+          continue;
+        }
+        cur += ch;
+      }
+      if (cur) out.push(cur);
+    });
+    return out;
+  },
+
   getHomeworkWords(hw, subject) {
     subject = subject || 'english';
     if (!hw) return [];
@@ -648,7 +672,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         break;
       }
       if (s !== subject) return;
-      w2.split(/[,，;；\s]+/).map(x => x.trim().replace(/^[cm]:+/, '')).filter(x => x.length > 0).forEach(part => {
+      const mathParts = subject === 'math' ? this._splitManualMath(w2) : w2.split(/[,，;；\s]+/).map(x => x.trim());
+      mathParts.map(x => x.replace(/^[cm]:+/, '')).filter(x => x.length > 0).forEach(part => {
         if (subject === 'chinese') push({ zi: part, pinyin: '', yi: '' });
         else if (subject === 'math') push({ en: part, cn: '' });
         else {
@@ -3596,7 +3621,7 @@ main.innerHTML = html;
     const finished = dp.cursor >= words.length;
     const doneToday = dp.date === today && dp.cursor > 0;
     const start = dp.cursor > 0 ? Math.min(dp.cursor, words.length) : 0;
-    const batchEnd = finished ? words.length : Math.min(start + DAILY_BATCH, words.length);
+    const batchEnd = words.length;
     const freeBatch = dp.cursor > 0 ? words.slice(Math.max(0, dp.cursor - DAILY_BATCH), dp.cursor) : [];
     const todayWords = words.slice(start, batchEnd);
     const stars = doneToday ? Math.max(1, Math.min(3, dp.stars || 1)) : 0;
@@ -3733,8 +3758,7 @@ main.innerHTML = html;
     const today = new Date().toDateString();
     let dp = Storage.getDailyProgress(this.currentStudent.id) || { date: '', cursor: 0 };
     dp.date = today;
-    if (dp.cursor + DAILY_BATCH > totalWords) dp.cursor = totalWords;
-    else dp.cursor += DAILY_BATCH;
+    dp.cursor = totalWords;
     if (stars) dp.stars = stars;
     Storage.saveDailyProgress(this.currentStudent.id, dp);
     this.renderDailyAccumulate();
@@ -5273,7 +5297,7 @@ main.innerHTML = html;
     const st = this._hwEditor;
     const input = document.getElementById('hw-manual-input');
     const itemName = st.subject === 'chinese' ? '汉字' : st.subject === 'math' ? '算式/口诀' : '单词';
-    const raw = (input.value || '').split(/[,，;；\s]+/).map(s => s.trim()).filter(s => s.length > 0).map(s => s.replace(/^(?:[cm]:)+/, ''));
+    const raw = (st.subject === 'math' ? this._splitManualMath(input.value) : (input.value || '').split(/[,，;；\s]+/)).map(s => s.trim()).filter(s => s.length > 0).map(s => s.replace(/^(?:[cm]:)+/, ''));
     if (raw.length === 0) { st.lastMsg = '<span style="color:#C62828">请输入' + itemName + '</span>'; this._renderHomeworkEditorUI(); return; }
     let added = 0;
     raw.forEach(w => {
@@ -15886,4 +15910,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260831-1719';
+window.__SERVER_VER = '20260901-1721';
