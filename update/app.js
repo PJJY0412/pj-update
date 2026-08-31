@@ -641,11 +641,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     });
     (hw.manual || []).forEach(word => {
       let s = subject;
-      let w2 = String(word);
-      if (w2.indexOf('c:') === 0) { s = 'chinese'; w2 = w2.slice(2); }
-      else if (w2.indexOf('m:') === 0) { s = 'math'; w2 = w2.slice(2); }
+      let w2 = String(word || '');
+      for (let cv = 0; cv < 4; cv++) {
+        if (w2.indexOf('c:') === 0) { s = 'chinese'; w2 = w2.slice(2); continue; }
+        if (w2.indexOf('m:') === 0) { s = 'math'; w2 = w2.slice(2); continue; }
+        break;
+      }
       if (s !== subject) return;
-      w2.split(/[,，;；\s]+/).map(x => x.trim()).filter(x => x.length > 0).forEach(part => {
+      w2.split(/[,，;；\s]+/).map(x => x.trim().replace(/^[cm]:+/, '')).filter(x => x.length > 0).forEach(part => {
         if (subject === 'chinese') push({ zi: part, pinyin: '', yi: '' });
         else if (subject === 'math') push({ en: part, cn: '' });
         else {
@@ -2698,7 +2701,10 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       seen[key] = 1;
       items.push({ en: String(w && w.en || '').trim(), eq: eq, cn: String(w && w.cn || '').trim() });
     });
-    if (!items.length) { alert('本次数学作业中没有可计算的口算题，请老师布置算式'); this.renderMathDailyModes(); return; }
+    if (!items.length) {
+      try { this._tasksLog('口算空卷：数学词 ' + (words || []).length + ' 条，可解析 0 条'); } catch (e) {}
+      alert('本次数学作业中没有可计算的口算题，请老师布置算式'); this.renderMathDailyModes(); return;
+    }
     this._mathPaper = { items: items, answers: {}, judged: false, score: 0 };
     this.activeSessionId = Storage.startSession('mathPaper', 0, '每天必练·数学·口算作业', '', { subject: 'math', totalItems: items.length });
     this._renderMathPaper();
@@ -5264,7 +5270,7 @@ main.innerHTML = html;
     const st = this._hwEditor;
     const input = document.getElementById('hw-manual-input');
     const itemName = st.subject === 'chinese' ? '汉字' : st.subject === 'math' ? '算式/口诀' : '单词';
-    const raw = (input.value || '').split(/[,，;；\s]+/).map(s => s.trim()).filter(s => s.length > 0);
+    const raw = (input.value || '').split(/[,，;；\s]+/).map(s => s.trim()).filter(s => s.length > 0).map(s => s.replace(/^(?:[cm]:)+/, ''));
     if (raw.length === 0) { st.lastMsg = '<span style="color:#C62828">请输入' + itemName + '</span>'; this._renderHomeworkEditorUI(); return; }
     let added = 0;
     raw.forEach(w => {
@@ -14447,7 +14453,7 @@ _ttsCancel() {
         const me = (Storage.getStudents() || []).find(s => String(s.id) === String(Storage.getStudent()));
         lines.push('学员: ' + (me ? me.name + '(id=' + me.id + ')' : '未登录'));
       } catch (e) {}
-      lines.push('LAN主机: ' + (this._getSavedHost() || '(未设置)'));
+      lines.push('LAN主机: ' + (self._getSavedHost() || '(未设置)'));
       try {
         const lg = JSON.parse(localStorage.getItem('pjyx_tasklog') || '[]') || [];
         lines.push('作业接收日志(' + lg.length + '): ' + (lg.length ? lg.slice(-3).join(' ‖ ') : '(无)'));
@@ -15052,6 +15058,7 @@ _ttsCancel() {
         else if (d.subject === 'math') Storage.saveHomeworkMath(sid, hw);
         else Storage.saveHomework(sid, hw);
         applied++;
+        try { this._tasksLog('作业 ' + d.subject + '→' + d.toName + ' 勾选' + ((d.hw.wordKeys || []).length) + ' 手动' + ((d.hw.manual || []).length) + ''); } catch (e) {}
         return;
       }
       if (!Array.isArray(d.items) || !d.items.length) return;
@@ -15876,4 +15883,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260831-1717';
+window.__SERVER_VER = '20260831-1718';
