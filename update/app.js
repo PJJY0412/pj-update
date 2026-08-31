@@ -2236,10 +2236,11 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   // 解析 en 为纯算式：'数字 op 数字 = 数字' → {a,op,b,result}；否则 null（概念/公式词）
   _mathParseEn(en) {
     const s = String(en || '').replace(/…….*$/, '').replace(/\s+/g, '');
-    const m = /^(-?\d+(?:\.\d+)?)([+\-×÷xX*])(-?\d+(?:\.\d+)?)=(-?\d+(?:\.\d+)?)$/.exec(s);
+    const m = /^(-?\d+(?:\.\d+)?)([+\-×÷xX*/])(-?\d+(?:\.\d+)?)=(-?\d+(?:\.\d+)?)$/.exec(s);
     if (m) {
       let op = m[2];
       if (op === 'x' || op === 'X' || op === '*') op = '×';
+      else if (op === '/') op = '÷';
       return { a: parseFloat(m[1]), op: op, b: parseFloat(m[3]), result: parseFloat(m[4]) };
     }
     // 混合运算链：expr=result（如 9÷3×2+1-2=5），a/op/b 取首项兼容旧调用方，chain 标记 + tokens 保留全链
@@ -2281,7 +2282,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const tokens = [];
     let rest = str;
     const numRe = /^-?\d+(?:\.\d+)?/;
-    const opRe = /^[+\-×÷xX*]/;
+    const opRe = /^[+\-×÷xX*/]/;
     let nm = numRe.exec(rest);
     if (!nm) return null;
     tokens.push({ t: 'n', v: parseFloat(nm[0]) });
@@ -2291,6 +2292,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       if (!om) return null;
       let op = om[0];
       if (op === 'x' || op === 'X' || op === '*') op = '×';
+      else if (op === '/') op = '÷';
       tokens.push({ t: 'op', s: op });
       rest = rest.slice(1);
       const nm2 = numRe.exec(rest);
@@ -2335,11 +2337,12 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
   _mathOpSym(op) {
     if (op === 'x' || op === 'X' || op === '*') return '×';
+    if (op === '/') return '÷';
     if (op === '+' || op === '-' || op === '×' || op === '÷') return String(op);
     return String(op || '');
   },
   _mathDisp(s) {
-    return String(s || '').replace(/[xX*]/g, '×');
+    return String(s || '').replace(/[xX*]/g, '×').replace(/\//g, '÷');
   },
   // 数字转中文读音（用于朗读结果/算式，如 5→五、12→十二、100→一百）
   _mathNumCn(n) {
@@ -6063,7 +6066,7 @@ const name = s2 ? s2.name : '';
     const base = s.replace(/=\s*\?*\s*$/, '').replace(/\s+$/, '');
     if (base === s || base.length === 0) {
       // 题面不含等号：直接补 "=答案"（仅当含四则运算符时）
-      return /[+\-×÷xX*]/.test(s) ? s + '=' + ma : s;
+      return /[+\-×÷xX*/]/.test(s) ? s + '=' + ma : s;
     }
     return base + '=' + ma;
   },
@@ -15883,4 +15886,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260831-1718';
+window.__SERVER_VER = '20260831-1719';
