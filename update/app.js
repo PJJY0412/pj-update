@@ -2297,52 +2297,94 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     }
     if (isNaN(result)) result = this._mathEvalTokens(tokens);
     if (isNaN(result)) return null;
-    if (tokens.length === 3) return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: result };
+    const simple = tokens.length === 3 && tokens[0].t === 'n' && tokens[1].t === 'op' && tokens[2].t === 'n';
+    if (simple) return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: result };
     return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: result, chain: true, tokens: tokens };
   },
-  // 把算式串切成 tokens（数字/操作符交替），支持混合运算链；非法字符/未闭合一律返回 null
+  // 把算式串切成 tokens（数字/操作符/括号），支持混合运算链与括号 ()；非法字符/未闭合一律返回 null
   _mathTokenize(s) {
     const str = String(s || '').replace(/…….*$/, '').replace(/\s+/g, '');
     if (!str) return null;
     const tokens = [];
-    let rest = str;
-    const numRe = /^-?\d+(?:\.\d+)?/;
-    const opRe = /^[+\-×÷xX*/]/;
-    let nm = numRe.exec(rest);
-    if (!nm) return null;
-    tokens.push({ t: 'n', v: parseFloat(nm[0]) });
-    rest = rest.slice(nm[0].length);
-    while (rest.length > 0) {
-      const om = opRe.exec(rest);
-      if (!om) return null;
-      let op = om[0];
-      if (op === 'x' || op === 'X' || op === '*') op = '×';
-      else if (op === '/') op = '÷';
-      tokens.push({ t: 'op', s: op });
-      rest = rest.slice(1);
-      const nm2 = numRe.exec(rest);
-      if (!nm2) return null;
-      tokens.push({ t: 'n', v: parseFloat(nm2[0]) });
-      rest = rest.slice(nm2[0].length);
+    const n = str.length;
+    let i = 0;
+    let expectOperand = true; // true = 期待一个操作数或 '('（此时 +/- 为符号、* / × ÷ 为非法）
+    while (i < n) {
+      const c = str[i];
+      if (c === '(') { tokens.push({ t: '(', c: '(' }); expectOperand = true; i++; continue; }
+      if (c === ')') {
+        if (expectOperand) return null; // 空括号或运算符后紧跟 ) 即非法
+        tokens.push({ t: ')', c: ')' });
+        expectOperand = false; i++; continue;
+      }
+      // 期待操作数时的 '+/-' 视为一元符号（consume，- 记 neg、+ 忽略）
+      if (expectOperand && (c === '+' || c === '-')) {
+        if (c === '-') tokens.push({ t: 'neg', c: '-' });
+        i++; expectOperand = false; continue;
+      }
+      if (/\d/.test(c)) {
+        const nm = /^\d+(?:\.\d+)?/.exec(str.slice(i));
+        if (!nm) return null;
+        tokens.push({ t: 'n', v: parseFloat(nm[0]) });
+        i += nm[0].length; expectOperand = false; continue;
+      }
+      if (c === '+' || c === '-' || c === '×' || c === '÷' || c === 'x' || c === 'X' || c === '*' || c === '/') {
+        if (expectOperand) return null; // 操作数缺失（如 "*3" 开头）
+        let op = c;
+        if (op === 'x' || op === 'X' || op === '*') op = '×';
+        else if (op === '/') op = '÷';
+        tokens.push({ t: 'op', s: op });
+        expectOperand = true; i++; continue;
+      }
+      return null;
     }
-    if (tokens[tokens.length - 1].t === 'op') return null;
+    if (tokens.length === 0) return null;
     return tokens;
   },
-  // 按运算优先级求值混合运算链（乘除同级先算→加减），结果四舍五入 3 位防浮点尾
+  // 按运算优先级求值 tokens：支持括号 () 与一元负号 neg，乘除高于加减（同级从左到右），结果四舍五入 3 位防浮点尾
   _mathEvalTokens(tokens) {
     if (!tokens || tokens.length < 3) return NaN;
-    const nums = [tokens[0].v];
+    const prec = { '+': 1, '-': 1, '×': 2, '÷': 2, 'neg': 3 };
+    const out = [];
     const ops = [];
-    for (let i = 1; i < tokens.length; i += 2) {
-      const op = tokens[i].s;
-      const num = tokens[i + 1].v;
-      if (op === '×' || op === '÷') nums[nums.length - 1] = this._mathCalc(nums[nums.length - 1], op, num);
-      else { ops.push(op); nums.push(num); }
+    let depth = 0;
+    let ok = true;
+    for (const t of tokens) {
+      if (t.t === 'n') { out.push(t); continue; }
+      if (t.t === 'neg') { ops.push('neg'); continue; }
+      if (t.t === '(') { ops.push('('); depth++; continue; }
+      if (t.t === ')') {
+        if (--depth < 0) { ok = false; break; }
+        while (ops.length && ops[ops.length - 1] !== '(') out.push(ops.pop());
+        if (!ops.length || ops[ops.length - 1] !== '(') { ok = false; break; }
+        ops.pop(); continue;
+      }
+      if (t.t === 'op') {
+        const p = prec[t.s] || 0;
+        while (ops.length && ops[ops.length - 1] !== '(' && (prec[ops[ops.length - 1]] || 0) >= p) out.push(ops.pop());
+        ops.push(t.s); continue;
+      }
     }
-    let res = nums[0];
-    for (let i = 0; i < ops.length; i++) res = this._mathCalc(res, ops[i], nums[i + 1]);
-    if (!isFinite(res)) return NaN;
-    return Math.round(res * 1000) / 1000;
+    if (depth !== 0) return NaN;
+    while (ops.length) { const o = ops.pop(); if (o === '(') return NaN; out.push(o); }
+    if (!ok) return NaN;
+    const st = [];
+    for (const it of out) {
+      if (it && it.t === 'n') { st.push(it.v); continue; }
+      if (it === 'neg') {
+        if (!st.length) return NaN;
+        st[st.length - 1] = -st[st.length - 1];
+        continue;
+      }
+      const b = st.pop(), a = st.pop();
+      if (a === undefined || b === undefined) return NaN;
+      const r = this._mathCalc(a, it, b);
+      if (isNaN(r)) return NaN;
+      st.push(r);
+    }
+    if (st.length !== 1) return NaN;
+    if (!isFinite(st[0])) return NaN;
+    return Math.round(st[0] * 1000) / 1000;
   },
   // 是否可当口算/填空的算式词（en 解析成功）
   _mathIsEquation(w) { return this._mathParseEn(w && w.en) != null; },
@@ -2406,7 +2448,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _mathExprZhStr(eq, withResult) {
     let s = '';
     if (eq && eq.tokens) {
-      eq.tokens.forEach(t => { s += t.t === 'n' ? this._mathNumCn(t.v) : this._mathOpZh(t.s); });
+      eq.tokens.forEach(t => {
+        if (t.t === 'n') s += this._mathNumCn(t.v);
+        else if (t.t === '(') s += '（';
+        else if (t.t === ')') s += '）';
+        else if (t.t === 'neg') s += '负';
+        else s += this._mathOpZh(t.s);
+      });
     } else {
       s = this._mathNumCn(eq.a) + this._mathOpZh(eq.op) + this._mathNumCn(eq.b);
     }
@@ -2416,8 +2464,14 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _mathExprDisp(eq) {
     if (eq && eq.tokens) {
       let s = '';
-      eq.tokens.forEach(t => { s += t.t === 'n' ? String(t.v) : (' ' + t.s + ' '); });
-      return s;
+      eq.tokens.forEach(t => {
+        if (t.t === 'n') s += String(t.v);
+        else if (t.t === '(') s += '( ';
+        else if (t.t === ')') s += ' )';
+        else if (t.t === 'neg') s += '-';
+        else s += ' ' + t.s + ' ';
+      });
+      return s.trim().replace(/\s{2,}/g, ' ');
     }
     return String(eq.a) + ' ' + this._mathOpSym(eq.op) + ' ' + String(eq.b);
   },
@@ -2425,7 +2479,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   _mathExprCompact(eq) {
     if (eq && eq.tokens) {
       let s = '';
-      eq.tokens.forEach(t => { s += t.t === 'n' ? String(t.v) : this._mathOpSym(t.s); });
+      eq.tokens.forEach(t => {
+        if (t.t === 'n') s += String(t.v);
+        else if (t.t === '(') s += '(';
+        else if (t.t === ')') s += ')';
+        else if (t.t === 'neg') s += '-';
+        else s += this._mathOpSym(t.s);
+      });
       return s;
     }
     return String(eq.a) + this._mathOpSym(eq.op) + String(eq.b);
@@ -3622,7 +3682,6 @@ main.innerHTML = html;
     const doneToday = dp.date === today && dp.cursor > 0;
     const start = dp.cursor > 0 ? Math.min(dp.cursor, words.length) : 0;
     const batchEnd = words.length;
-    const freeBatch = dp.cursor > 0 ? words.slice(Math.max(0, dp.cursor - DAILY_BATCH), dp.cursor) : [];
     const todayWords = words.slice(start, batchEnd);
     const stars = doneToday ? Math.max(1, Math.min(3, dp.stars || 1)) : 0;
 
@@ -3638,9 +3697,12 @@ main.innerHTML = html;
     const accDue = this._accAccDueWords();
     const accLv = this._accAccMeta().accum.lv;
 
+    // 自由练习：覆盖当天已积累的全部单词（跨多次布置合并去重，数量=当天实际已学）
+    const freeBatch = this._accTodayAccWords();
+
     let freeHtml = '';
     if (freeBatch.length) {
-      freeHtml += '<div style="font-size:14px;font-weight:700;margin-bottom:8px">🎈 自由练习 · 巩固这 ' + freeBatch.length + ' 词</div>';
+      freeHtml += '<div style="font-size:14px;font-weight:700;margin-bottom:8px">🎈 自由练习 · 巩固当天这 ' + freeBatch.length + ' 词</div>';
       freeHtml += '<div style="margin-bottom:6px">';
       freeHtml += '<button class="daily-mode-btn" data-free="hs" style="width:100%;margin-bottom:8px">🎤 听音拼写</button>';
       freeHtml += '<button class="daily-mode-btn" data-free="game" style="width:100%;margin-bottom:8px">🎮 消消乐配对</button>';
@@ -3665,16 +3727,52 @@ main.innerHTML = html;
       html += '<div style="font-size:14px;font-weight:700;color:#33691E">📚 我的积累墙 <small style="font-weight:400;color:#689F38">已累积 ' + accCount + ' 词 · ' + accDays + ' 天</small></div>';
       if (accDue.length) html += '<button class="daily-mode-btn" data-accdue="1" style="font-size:12px;padding:5px 10px">⏰ 到期复习 ' + accDue.length + '</button>';
       html += '</div>';
-      html += '<div style="display:flex;flex-wrap:wrap">';
-      (accAll.slice(0, 30)).forEach(w => {
-        const id = String(w.en || w.zi).toLowerCase().trim();
-        const ripe = (accLv[id] || 0) >= MEMORY_INTERVALS.length;
-        html += '<div class="acc-wall-word" data-spk="' + this._h(String(w.en || w.zi)).replace(/"/g, '&quot;') + '" style="flex:0 0 33.33%;padding:5px 4px;text-align:center;cursor:pointer">';
-        html += '<div style="font-size:16px;font-weight:700;color:' + (ripe ? '#F57F17' : '#33691E') + '">' + this._h(w.en || w.zi) + '</div>';
-        html += '<div style="font-size:10px;color:#8BC34A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ripe ? '🍎 已毕业' : '复习 ' + (accLv[id] || 0) + '/' + MEMORY_INTERVALS.length) + '</div>';
+      // 按日期分组的"文件夹"：每天一个文件夹，标记当天单词/短语数量
+      const accAllArr = accAll;
+      const id2word = {};
+      accAllArr.forEach(function(w) { id2word[String(w.en || w.zi).toLowerCase().trim()] = w; });
+      const dayKeys = Object.keys((dp.accum && dp.accum.days) || {}).sort().reverse();
+      const dayRows = dayKeys.map(function(dk) {
+        const ids = (dp.accum.days[dk] || []);
+        const words = ids.map(function(id) { return id2word[id] || { en: id, cn: '' }; }).filter(function(w) { return String(w.en || w.zi).trim(); });
+        return { dk: dk, words: words };
+      }).filter(function(r) { return r.words.length > 0; });
+      if (dayRows.length) {
+        const accSelf = this;
+        html += '<div style="margin-bottom:6px">';
+        dayRows.forEach(function(r, ri) {
+          const isOpen = ri === 0;
+          const ripe = function(wid) { return (accLv[wid] || 0) >= MEMORY_INTERVALS.length; };
+          html += '<div style="border:1px solid #DCEDC8;border-radius:10px;margin-bottom:8px;overflow:hidden">';
+          html += '<div class="acc-day-head" data-day="' + r.dk + '" style="display:flex;align-items:center;justify-content:space-between;background:#DCEDC8;padding:8px 12px;cursor:pointer;user-select:none">';
+          html += '<div style="font-size:13px;font-weight:700;color:#33691E">📁 ' + r.dk + ' <small style="font-weight:400;color:#558B2F;margin-left:4px">' + r.words.length + ' 词/短语</small></div>';
+          html += '<div style="font-size:11px;color:#558B2F">' + (isOpen ? '▲' : '▼') + '</div>';
+          html += '</div>';
+          html += '<div class="acc-day-body" style="display:flex;flex-wrap:wrap;' + (isOpen ? '' : 'display:none') + ';padding:8px 8px">';
+          r.words.forEach(function(w) {
+            const id = String(w.en || w.zi).toLowerCase().trim();
+            html += '<div class="acc-wall-word" data-spk="' + accSelf._h(String(w.en || w.zi)).replace(/"/g, '&quot;') + '" style="flex:0 0 33.33%;padding:5px 4px;text-align:center;cursor:pointer">';
+            html += '<div style="font-size:15px;font-weight:700;color:' + (ripe(id) ? '#F57F17' : '#33691E') + '">' + accSelf._h(w.en || w.zi) + '</div>';
+            html += '<div style="font-size:9px;color:#8BC34A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ripe(id) ? '🍎 已毕业' : '复习 ' + (accLv[id] || 0) + '/' + MEMORY_INTERVALS.length) + '</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+          html += '</div>';
+        });
         html += '</div>';
-      });
-      html += '</div>';
+      } else {
+        const accSelf2 = this;
+        html += '<div style="display:flex;flex-wrap:wrap">';
+        accAllArr.slice(0, 30).forEach(function(w) {
+          const id = String(w.en || w.zi).toLowerCase().trim();
+          const ripe = (accLv[id] || 0) >= MEMORY_INTERVALS.length;
+          html += '<div class="acc-wall-word" data-spk="' + accSelf2._h(String(w.en || w.zi)).replace(/"/g, '&quot;') + '" style="flex:0 0 33.33%;padding:5px 4px;text-align:center;cursor:pointer">';
+          html += '<div style="font-size:16px;font-weight:700;color:' + (ripe ? '#F57F17' : '#33691E') + '">' + accSelf2._h(w.en || w.zi) + '</div>';
+          html += '<div style="font-size:10px;color:#8BC34A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ripe ? '🍎 已毕业' : '复习 ' + (accLv[id] || 0) + '/' + MEMORY_INTERVALS.length) + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
       html += '<button class="daily-mode-btn" data-accall="1" style="width:100%;margin-top:8px">🔄 复习全部积累 ' + accCount + ' 词</button>';
       html += '</div>';
     } else {
@@ -3731,6 +3829,16 @@ main.innerHTML = html;
     const backBtn = document.getElementById('acc-back-practice');
     if (backBtn) backBtn.addEventListener('click', () => this.renderDailyPractice());
 
+    document.querySelectorAll('.acc-day-head').forEach(head => {
+      head.addEventListener('click', () => {
+        const body = head.nextElementSibling;
+        if (!body) return;
+        const show = body.style.display === 'none';
+        body.style.display = show ? 'flex' : 'none';
+        const arrow = head.lastElementChild;
+        if (arrow) arrow.textContent = show ? '▲' : '▼';
+      });
+    });
     main.querySelectorAll('.acc-wall-word').forEach(el => {
       el.addEventListener('click', () => this.speakWord(el.dataset.spk));
     });
@@ -3819,6 +3927,16 @@ main.innerHTML = html;
       if (w) out.push(w);
     });
     return out;
+  },
+  _accTodayAccWords() {
+    const dp = this._accAccMeta();
+    const todayKey = this._gardenDateStr(0);
+    const ids = (dp.accum && dp.accum.days && dp.accum.days[todayKey]) || [];
+    const all = this._accAccAllWords();
+    return ids.map(id => {
+      const w = all.find(x => String(x.en || x.zi).toLowerCase().trim() === id);
+      return w || { en: id, cn: '' };
+    }).filter(w => String(w.en || w.zi).trim());
   },
   _accAccAdvance(ids) {
     if (!ids || !ids.length) return;
@@ -4227,12 +4345,14 @@ main.innerHTML = html;
     const today = new Date().toDateString();
     const dp = Storage.getDailyProgress(this.currentStudent.id) || { date: '', cursor: 0 };
     const words = this.getHomeworkWords(Storage.getHomework(this.currentStudent.id));
-    let batch;
-    if (dp.cursor > 0) {
-      if (dp.date === today) batch = words.slice(Math.max(0, dp.cursor - DAILY_BATCH), dp.cursor);
-      else batch = words.slice(Math.max(0, dp.cursor - DAILY_BATCH), Math.max(dp.cursor, DAILY_BATCH));
-    } else {
-      batch = words.slice(0, Math.min(DAILY_BATCH, words.length));
+    let batch = this._accTodayAccWords();
+    if (!batch.length) {
+      if (dp.cursor > 0) {
+        if (dp.date === today) batch = words.slice(Math.max(0, dp.cursor - DAILY_BATCH), dp.cursor);
+        else batch = words.slice(Math.max(0, dp.cursor - DAILY_BATCH), Math.max(dp.cursor, DAILY_BATCH));
+      } else {
+        batch = words.slice(0, Math.min(DAILY_BATCH, words.length));
+      }
     }
     if (!batch.length) { this.renderDailyAccumulate(); return; }
     this._unitIndex[DAILY_UNIT_ID] = { words: batch, unitTitle: '今日积累', gradeTitle: '日积月累', totalWords: batch.length };
@@ -15910,4 +16030,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260901-1721';
+window.__SERVER_VER = '20260901-1722';
