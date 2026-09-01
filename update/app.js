@@ -4675,17 +4675,31 @@ main.innerHTML = html;
           const rep = archived.stats;
           if (totalMin === 0 && rep.minutes > 0) totalMin = rep.minutes;
           if (sessions.length === 0 && rep.history > 0) {
-            sessions = [{ completed: true, type: 'report-merged', correctCount: rep.wrongs != null ? Math.round((rep.history * 80) / 100) : 0, wrongCount: rep.wrongs || 0, totalItems: rep.wrongs != null ? Math.round((rep.history * 80) / 100) + rep.wrongs : 0, duration: (rep.minutes || 0) * 60, startTime: rep.lastPractice || new Date().toISOString(), subject: 'english' }];
             data.progress = data.progress || {};
             data.progress.totalXP = rep.xp || data.progress.totalXP || 0;
             data.progress.level = rep.level || data.progress.level || 1;
             data.progress.streak = rep.streak || data.progress.streak || 0;
             data.progress.completedLessons = data.progress.completedLessons || {};
             if (rep.lessons) for (let _i = 0; _i < rep.lessons; _i++) data.progress.completedLessons['rpt_' + _i] = true;
+            if (rep.lastPractice) data.progress.lastPracticeDate = rep.lastPractice;
+            const repSubs = rep.subjects || {};
+            const realSubs = Object.keys(repSubs).filter(sk => repSubs[sk] && repSubs[sk].sessions > 0);
+            if (realSubs.length > 0) {
+              sessions = [];
+              realSubs.forEach(sk => {
+                const ss = repSubs[sk];
+                for (let _si = 0; _si < ss.sessions; _si++) {
+                  sessions.push({ completed: true, type: 'report-merged', subject: sk, correctCount: Math.round(ss.total * (ss.accuracy || 80) / 100 / Math.max(1, ss.sessions)), wrongCount: Math.round(ss.total * (100 - (ss.accuracy || 80)) / 100 / Math.max(1, ss.sessions)), totalItems: Math.round(ss.total / Math.max(1, ss.sessions)), duration: Math.round(ss.minutes * 60 / Math.max(1, ss.sessions)), startTime: rep.lastPractice || new Date().toISOString() });
+                }
+              });
+            } else {
+              sessions = [{ completed: true, type: 'report-merged', correctCount: rep.wrongs != null ? Math.round((rep.history * 80) / 100) : 0, wrongCount: rep.wrongs || 0, totalItems: rep.wrongs != null ? Math.round((rep.history * 80) / 100) + rep.wrongs : 0, duration: (rep.minutes || 0) * 60, startTime: rep.lastPractice || new Date().toISOString() }];
+            }
           }
           if (rep.subjects) {
             const subKeys = Object.keys(rep.subjects);
             subKeys.forEach(sk => { const ss = rep.subjects[sk]; if (ss && ss.sessions > 0 && !sessions.some(s => s.subject === sk)) { for (let _si = 0; _si < ss.sessions; _si++) { sessions.push({ completed: true, type: 'report-merged', subject: sk, correctCount: Math.round(ss.total * (ss.accuracy || 80) / 100 / Math.max(1, ss.sessions)), wrongCount: Math.round(ss.total * (100 - (ss.accuracy || 80)) / 100 / Math.max(1, ss.sessions)), totalItems: Math.round(ss.total / Math.max(1, ss.sessions)), duration: Math.round(ss.minutes * 60 / Math.max(1, ss.sessions)), startTime: rep.lastPractice || new Date().toISOString() }); } } });
+            if (rep.lastPractice && !(data.progress && data.progress.lastPracticeDate)) { data.progress = data.progress || {}; data.progress.lastPracticeDate = rep.lastPractice; }
           }
         }
         this._generateShareImage(data, sessions, totalMin, name, previewDiv, wwc);
@@ -4703,7 +4717,7 @@ main.innerHTML = html;
     const totalItems = sessions.reduce((sum, s) => sum + (s.totalItems || 0), 0);
     const accuracy = totalItems > 0 ? Math.round((correctCount / totalItems) * 100) : 0;
     let totalMin = 0; sessions.forEach(s => { totalMin += Math.round((s.duration || 0) / 60); });
-    const lastDate = d.progress.lastPracticeDate || '—';
+    const lastDate = this._lastPracticeVal(d.progress, allSessions);
     let wrongWordCount = 0;
     try {
       const prevId = Storage.getStudent();
@@ -4778,6 +4792,15 @@ main.innerHTML = html;
     });
   },
 
+  _fmtMonthDay(v) {
+    try {
+      if (v == null || v === '') return '';
+      const d = new Date(v);
+      if (isFinite(d.getTime())) return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+      return String(v);
+    } catch (e) { return String(v == null ? '' : v); }
+  },
+
   _reportDate(r) {
     try {
       if (r && r.stats && r.stats.lastPractice) return String(r.stats.lastPractice);
@@ -4788,10 +4811,22 @@ main.innerHTML = html;
 
   _repLastTime(r) {
     try {
-      const t = new Date(this._reportDate(r) + 'T00:00:00').getTime();
+      const s = this._reportDate(r);
+      if (!s) return 0;
+      const t = new Date(s).getTime();
       if (isFinite(t)) return t;
     } catch (e) {}
     return 0;
+  },
+
+  _lastPracticeVal(progress, sessions) {
+    try {
+      if (progress && progress.lastPracticeDate) return this._fmtMonthDay(progress.lastPracticeDate);
+      let lastTs = 0;
+      (sessions || []).forEach(s => { const t = new Date(s.startTime || s.endTime || 0).getTime(); if (isFinite(t) && t > lastTs) lastTs = t; });
+      if (lastTs > 0) return this._fmtMonthDay(new Date(lastTs));
+    } catch (e) {}
+    return '—';
   },
 
   _renderInactiveMerged(container, local, remote, reports) {
@@ -5551,6 +5586,28 @@ main.innerHTML = html;
     } catch (e) { return false; }
   },
 
+  _cleanApkInfo(cur) {
+    // 死锁自愈（2026-09-01）：_apkDownloaded 在"下载完成即落盘"apk_info，若安装被用户点"取消"，
+    // 该记录会谎称新版已装 → _sameApk 恒真 → 此后永远不再提示更新（跨会话持久）。
+    // 判据：真正装成会重启、且运行中 __BUILTIN_VER 即为该版本；故"记录版本 > 内置版本"必为未装成的
+    // 假阳性 → 丢弃记录并清本次会话的提示锁，放行再次自动更新。旧平板被死锁的历史记录同样自愈。
+    try {
+      if (!cur) return cur;
+      // 只认 __BUILTIN_VER：它才是"实际安装的 APK 外壳版本"（打包内建）。
+      // 不能用 __SERVER_VER 兜底——那是 JS 版本，网页版(非 APK)从不装壳，用它兜底会把
+      // 网页版中故意写得超前(如 2099)的测试记录误判为假阳性而清掉。
+      const bv = String(window.__BUILTIN_VER || '').trim();
+      const cv = String((cur && cur.version) || '').trim();
+      const isDate = (s) => /^\d{8}-\d{4}$/.test(s);
+      if (isDate(cv) && isDate(bv) && cv > bv) {
+        try { Storage.setApkInfo(null); } catch (e) {}
+        this._apkNoticeShown = false;
+        return null;
+      }
+      return cur;
+    } catch (e) { return cur; }
+  },
+
   _checkJsUpdate(attempt) {
     attempt = attempt || 0;
     let host = this._getSavedHost();
@@ -5575,7 +5632,7 @@ main.innerHTML = html;
           setTimeout(() => { try { this._checkCloudUpdate(0); } catch (e) {} }, 500);
           return;
         }
-        const cur = Storage.getApkInfo();
+        const cur = this._cleanApkInfo(Storage.getApkInfo());
         const need = this._wantApk(v.apk, cur);
         if (need) {
           if (!this._apkNoticeShown) {
@@ -5678,7 +5735,7 @@ if (this._apkNoticeShown) return;
         let v = null;
         try { v = JSON.parse(txt); } catch (e) {}
         if (!v || !v.apk) throw new Error('云端版本信息无效');
-        const cur = Storage.getApkInfo();
+        const cur = this._cleanApkInfo(Storage.getApkInfo());
         const need = this._wantApk(v.apk, cur);
         if (need) {
           if (!this._apkNoticeShown) {
@@ -8775,7 +8832,7 @@ students.forEach(s => {
       const st = r.stats || {};
       const devShort = String(r.deviceId || '').slice(-4) || '????';
       const when = r.updatedAt ? new Date(r.updatedAt).toLocaleString('zh-CN') : '';
-      const lastPractice = st.lastPractice ? ' · 最近练习 ' + st.lastPractice : '';
+      const lastPractice = st.lastPractice ? ' · 最近练习 ' + this._fmtMonthDay(st.lastPractice) : '';
       html += '<div style="background:#F5F7FA;border:1px solid #E0E0E0;border-radius:10px;padding:12px 14px;margin-bottom:10px">';
       html += '<div style="display:flex;align-items:center;gap:6px">';
       html += '<strong style="font-size:15px">' + this._h(r.name) + '</strong>';
@@ -9434,7 +9491,7 @@ _loadAnswers() {
       { v: totalCorrect + '', l: '正确题数' },
       { v: totalWrong + '', l: '错题数', c: '#FF5252' },
       { v: wrongWordCount + '', l: '待复习错题', c: '#FF5252' },
-      { v: (data.progress.lastPracticeDate || '—'), l: '最近练习' },
+      { v: this._lastPracticeVal(data.progress, exSessions), l: '最近练习' },
       { v: (typeStats.hearChoose ? typeStats.hearChoose.count : 0) + '/' + (typeStats.hearSpell ? typeStats.hearSpell.count : 0), l: '听选/听拼' },
     ];
     const cols = 3, cw = 172, ch = 81, sy = 180, gx = 22, gy = 15;
@@ -16030,4 +16087,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260901-1722';
+window.__SERVER_VER = '20260901-1723';
