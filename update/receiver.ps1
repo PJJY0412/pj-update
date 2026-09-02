@@ -2420,6 +2420,152 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
                 Send-Response $stream '200 OK' 'application/json' (@{ ok = $true; removed = $removed } | ConvertTo-Json -Compress)
             }
         }
+        elseif ($method -eq 'POST' -and $pathOnly -eq '/wrongbank') {
+            $body = Read-Body $stream $contentLength
+            $json = $null
+            try { $json = $body | ConvertFrom-Json } catch {}
+            if ($null -eq $json -or [string]::IsNullOrEmpty([string]$json.name)) {
+                Send-Response $stream '400 Bad Request' 'application/json' '{"ok":false,"err":"name missing"}'
+            } else {
+                $student = [string]$json.name
+                $grade = if ($null -ne $json.grade) { [string]$json.grade } else { '' }
+                $items = @($json.items)
+                $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
+                $bankDir = Join-Path $updDir 'wrongbank'
+                try { New-Item -ItemType Directory -Path $bankDir -Force | Out-Null } catch {}
+                $bankFile = Join-Path $bankDir "$safeName.json"
+                $existing = @()
+                try {
+                    if (Test-Path $bankFile) {
+                        $parsed = [System.IO.File]::ReadAllText($bankFile) | ConvertFrom-Json
+                        if ($null -ne $parsed -and $null -ne $parsed.items) { $existing = @($parsed.items) }
+                    }
+                } catch {}
+                $merged = $existing
+                foreach ($item in $items) {
+                    $wEn = [string]$item.wordEn
+                    if ([string]::IsNullOrEmpty($wEn)) { continue }
+                    $found = $false
+                    for ($idx = 0; $idx -lt $merged.Count; $idx++) {
+                        if ([string]$merged[$idx].wordEn -eq $wEn) {
+                            $merged[$idx] = $item
+                            $found = $true
+                            break
+                        }
+                    }
+                    if (-not $found) { $merged += $item }
+                }
+                try {
+                    $out = @{ name = $student; grade = $grade; items = $merged } | ConvertTo-Json -Depth 6 -Compress
+                    [System.IO.File]::WriteAllText($bankFile, $out, (New-Object System.Text.UTF8Encoding $true))
+                } catch { Log ("д wrongbank ʧ��: {0}" -f $_.Exception.Message) }
+                Send-Response $stream '200 OK' 'application/json' (@{ ok = $true; count = $merged.Count } | ConvertTo-Json -Compress)
+            }
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/wrongbank') {
+            $student = ''
+            if ($query -match 'student=([^&]*)') { $student = [System.Uri]::UnescapeDataString($Matches[1]) }
+            if ([string]::IsNullOrEmpty($student)) {
+                Send-Response $stream '400 Bad Request' 'application/json' '{"ok":false,"err":"student param missing"}'
+            } else {
+                $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
+                $bankFile = Join-Path $updDir "wrongbank\$safeName.json"
+                $result = @{ student = $student; items = @() }
+                try {
+                    if (Test-Path $bankFile) {
+                        $parsed = [System.IO.File]::ReadAllText($bankFile) | ConvertFrom-Json
+                        if ($null -ne $parsed -and $null -ne $parsed.items) { $result.items = @($parsed.items) }
+                    }
+                } catch {}
+                Send-Response $stream '200 OK' 'application/json' ($result | ConvertTo-Json -Depth 6 -Compress)
+            }
+        }
+        elseif ($method -eq 'POST' -and $pathOnly -eq '/accum') {
+            $body = Read-Body $stream $contentLength
+            $json = $null
+            try { $json = $body | ConvertFrom-Json } catch {}
+            if ($null -eq $json -or [string]::IsNullOrEmpty([string]$json.name)) {
+                Send-Response $stream '400 Bad Request' 'application/json' '{"ok":false,"err":"name missing"}'
+            } else {
+                $student = [string]$json.name
+                $grade = if ($null -ne $json.grade) { [string]$json.grade } else { '' }
+                $incoming = $json.accum
+                $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
+                $accumDir = Join-Path $updDir 'accum'
+                try { New-Item -ItemType Directory -Path $accumDir -Force | Out-Null } catch {}
+                $accumFile = Join-Path $accumDir "$safeName.json"
+                $existing = $null
+                try {
+                    if (Test-Path $accumFile) {
+                        $existing = [System.IO.File]::ReadAllText($accumFile) | ConvertFrom-Json
+                    }
+                } catch {}
+                if ($null -eq $existing) { $existing = @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } }
+                if ($null -ne $incoming) {
+                    if ($null -ne $incoming.days) {
+                        foreach ($prop in $incoming.days.PSObject.Properties) {
+                            $dayKey = $prop.Name
+                            $dayIds = @($prop.Value)
+                            if ($null -eq $existing.days) { $existing.days = @{} }
+                            if ($null -eq $existing.days.$dayKey) { $existing.days.$dayKey = @() }
+                            foreach ($id in $dayIds) {
+                                if ($existing.days.$dayKey -notcontains $id) { $existing.days.$dayKey += $id }
+                            }
+                        }
+                    }
+                    if ($null -ne $incoming.list) {
+                        if ($null -eq $existing.list) { $existing.list = @() }
+                        foreach ($id in @($incoming.list)) {
+                            if ($existing.list -notcontains $id) { $existing.list += $id }
+                        }
+                    }
+                    if ($null -ne $incoming.lv) {
+                        if ($null -eq $existing.lv) { $existing.lv = @{} }
+                        foreach ($prop in $incoming.lv.PSObject.Properties) {
+                            $existingLv = 0
+                            try { $existingLv = [int]$existing.lv.$($prop.Name) } catch {}
+                            $newLv = 0
+                            try { $newLv = [int]$prop.Value } catch {}
+                            if ($newLv -gt $existingLv) { $existing.lv.$($prop.Name) = $newLv }
+                        }
+                    }
+                    if ($null -ne $incoming.due) {
+                        if ($null -eq $existing.due) { $existing.due = @{} }
+                        foreach ($prop in $incoming.due.PSObject.Properties) {
+                            if ([string]::IsNullOrEmpty([string]$existing.due.$($prop.Name))) {
+                                $existing.due.$($prop.Name) = $prop.Value
+                            } elseif ([string]$prop.Value -lt [string]$existing.due.$($prop.Name)) {
+                                $existing.due.$($prop.Name) = $prop.Value
+                            }
+                        }
+                    }
+                    if ([string]$incoming.last -gt [string]$existing.last) { $existing.last = $incoming.last }
+                }
+                try {
+                    $out = @{ name = $student; grade = $grade; accum = $existing } | ConvertTo-Json -Depth 6 -Compress
+                    [System.IO.File]::WriteAllText($accumFile, $out, (New-Object System.Text.UTF8Encoding $true))
+                } catch { Log ("д accum ʧ��: {0}" -f $_.Exception.Message) }
+                Send-Response $stream '200 OK' 'application/json' (@{ ok = $true } | ConvertTo-Json -Compress)
+            }
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/accum') {
+            $student = ''
+            if ($query -match 'student=([^&]*)') { $student = [System.Uri]::UnescapeDataString($Matches[1]) }
+            if ([string]::IsNullOrEmpty($student)) {
+                Send-Response $stream '400 Bad Request' 'application/json' '{"ok":false,"err":"student param missing"}'
+            } else {
+                $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
+                $accumFile = Join-Path $updDir "accum\$safeName.json"
+                $result = @{ student = $student; accum = @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } }
+                try {
+                    if (Test-Path $accumFile) {
+                        $parsed = [System.IO.File]::ReadAllText($accumFile) | ConvertFrom-Json
+                        if ($null -ne $parsed -and $null -ne $parsed.accum) { $result.accum = $parsed.accum }
+                    }
+                } catch {}
+                Send-Response $stream '200 OK' 'application/json' ($result | ConvertTo-Json -Depth 6 -Compress)
+            }
+        }
         else {
             Send-Response $stream '404 Not Found' 'text/plain' '404'
         }
@@ -2628,4 +2774,3 @@ try {
 } catch {}
 
 [System.Windows.Forms.Application]::Run()
-
