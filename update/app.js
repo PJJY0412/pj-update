@@ -5568,8 +5568,19 @@ main.innerHTML = html;
   _wantApk(v, cur) {
     // 判断 v 标明的 APK 是否值得下载：必须比已装(本地记录)与内置版本都更新，严格防降级。
     // 关键场景：平板走云端装了新版、公司电脑更新目录还是旧版时，LAN /check 返回旧版不得被当作"新版"再拉下去。
+    // 死锁兜底（2026-09-01，勿回退）：_apkDownloaded 在下载完成即落盘 apk_info，若安装被用户取消，
+    // 记录会谎称"该版已装"→ _sameApk 恒真 → 从此再也不提示更新（跨会话持久）。
+    // 联合校验：本地记录与服务器一致，但 __BUILTIN_VER（实际装进壳的 APK 版本）比记录旧时，
+    // 记录必为"下载完没装成"的假阳性 → 弃之并按无记录重判，放行再次自动更新。
+    // 只认 __BUILTIN_VER（勿用 __SERVER_VER 兜底：网页版从不上壳，兜底会把测试记录误清）。
     try {
       if (!v || !v.hash) return false;
+      const _isDate = (s) => /^\d{8}-\d{4}$/.test(String(s || '').trim());
+      if (cur && _isDate(cur.version) && _isDate(window.__BUILTIN_VER) && cur.version > window.__BUILTIN_VER) {
+        try { Storage.setApkInfo(null); } catch (e) {}
+        this._apkNoticeShown = false;
+        cur = null;
+      }
       if (this._sameApk(cur, v)) return false;
       const bv = String(window.__BUILTIN_VER || window.__SERVER_VER || '').trim();
       const va = String(v.version || '').trim();
@@ -5675,19 +5686,29 @@ if (this._apkNoticeShown) return;
     const tryLan = () => {
       const host = this._getSavedHost();
       if (!host) return Promise.resolve(false);
-      return this._fetchJsonTimeout('http://' + host + ':8899/students.json', 5000)
-        .then(txt => {
+      return Promise.all([
+        this._fetchJsonTimeout('http://' + host + ':8899/students.json', 5000).catch(() => null),
+        this._fetchJsonTimeout('http://' + host + ':8899/students/deleted', 5000).catch(() => null)
+      ]).then(rs => {
+        const txt = rs[0];
+        const deadTxt = rs[1];
+        // 先应用电脑端"已删学员"墓碑：把本机残留的已删学员一并删除，再合并名单才不会被"复活"（勿回退）
+        if (deadTxt) {
           try {
-            const list = JSON.parse(txt);
-            if (Array.isArray(list) && list.length) {
-              Storage.mergeStudents(list);
-              console.log('局域网同步学员:', list.length, '人');
-              return true;
-            }
+            const dead = JSON.parse(deadTxt);
+            if (Array.isArray(dead)) this._applyRemoteDeleted(dead);
           } catch (e) {}
-          return false;
-        })
-        .catch(() => false);
+        }
+        try {
+          const list = JSON.parse(txt);
+          if (Array.isArray(list) && list.length) {
+            Storage.mergeStudents(list);
+            console.log('局域网同步学员:', list.length, '人');
+            return true;
+          }
+        } catch (e) {}
+        return false;
+      });
     };
     const tryCloud = () => {
       return this._fetchJsonTimeout('https://cdn.jsdelivr.net/gh/PJJY0412/pj-update@master/update/students.json', 8000)
@@ -5709,13 +5730,36 @@ if (this._apkNoticeShown) return;
         if (self.currentView === 'login') self.renderLogin();
       } catch (e) {}
     };
-    tryLan().then(ok => {
+    // 必须 return 整条链：init 等后台调用不等待，但 await 的调用方（同步时合并/删墓碑已完成）
+    // 必须拿到真实完成时刻，否则在链跑完前就读名单 → 已删学员还在、墓碑未写（勿回退）
+    return tryLan().then(ok => {
       if (ok) {
         try { self._flushPendingStudentRemovals(); } catch (e) {}
       } else {
         return tryCloud();
       }
     }).then(refreshIfNeeded, refreshIfNeeded);
+  },
+
+  // 应用电脑端"已删学员"墓碑：把本机残留的对应学员一并删除并记入本地墓碑，防复活（勿回退）
+  _applyRemoteDeleted(deadList) {
+    try {
+      if (!Array.isArray(deadList) || !deadList.length) return;
+      const students = Storage.getStudents();
+      if (!students || !students.length) return;
+      deadList.forEach(d => {
+        const nm = String(d && d.name || '').trim();
+        if (!nm) return;
+        students.filter(s => s && String(s.name) === nm).forEach(s => {
+          try {
+            const grade = Storage.getCurrentGrade(s);
+            Storage.deleteStudent(s.id);
+            Storage.addPendingStudentRemoval(nm, grade);
+            console.log('应用删除墓碑：本机学员『' + nm + '』已删除（电脑端同步删除）');
+          } catch (e) {}
+        });
+      });
+    } catch (e) {}
   },
 
   _cloudMetaUrl() {
@@ -8575,7 +8619,17 @@ students.forEach(s => {
       const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
       setTimeout(() => finish({ ok: false, err: 'timeout' }), 3000);
       if (window.AndroidLan) {
-        try { window.AndroidLan.get(url, cb); return; } catch (e) {}
+        try {
+          window.AndroidLan.get(url, cb);
+          setTimeout(() => {
+            if (!settled) {
+              fetch(url)
+                .then(r => r.text().then(t => finish({ ok: r.ok, status: r.status, body: t })))
+                .catch(e => finish({ ok: false, err: String(e) }));
+            }
+          }, 1200);
+          return;
+        } catch (e) {}
       }
       fetch(url)
         .then(r => r.text().then(t => finish({ ok: r.ok, status: r.status, body: t })))
@@ -8625,11 +8679,13 @@ students.forEach(s => {
     });
   },
 
-  // 同步学员到电脑/云端；removedList 为本次(在线)删除，另合并持久化队列的离线删除，成功后清空已同步队列
-  _pushStudentsToHost(removedList) {
+  // 同步学员到电脑/云端；removedList 为本次(在线)删除，另合并持久化队列的离线删除，成功后清空已同步队列。
+  // newStudents 为平板主动注册的新学员（receiver 据此清除墓碑、恢复建档资格），勿与全量同步混淆
+  _pushStudentsToHost(removedList, newStudents) {
     try {
       const host = this._getSavedHost();
       let removed = Array.isArray(removedList) ? removedList.slice() : [];
+      const newStu = Array.isArray(newStudents) ? newStudents.slice() : [];
       const pending = Storage.getPendingStudentRemovals();
       pending.forEach(r => {
         if (r && !removed.some(x => x && String(x.name) === String(r.name) && String(x.grade) === String(r.grade))) {
@@ -8641,9 +8697,15 @@ students.forEach(s => {
         grade: Storage.getCurrentGrade(s),
         createdAt: s.createdAt || ''
       }));
-      if (!students.length && !removed.length) return Promise.resolve();
+      if (!students.length && !removed.length && !newStu.length) return Promise.resolve();
       const payloadObj = { students: students };
       if (removed.length) payloadObj.removed = removed;
+      if (newStu.length) {
+        payloadObj.newStudents = newStu.map(s => ({
+          name: String(s.name || '').trim(),
+          grade: String(s.grade != null ? s.grade : (s.id ? Storage.getCurrentGrade(s) : '1'))
+        }));
+      }
       const payload = JSON.stringify(payloadObj);
       const onOk = () => { try { Storage.clearPendingStudentRemovals(removed); } catch (e) {} };
       // 先尝试局域网
@@ -9831,7 +9893,7 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
       var student = Storage.addStudent(name, grade);
       console.log('_regBtn: addStudent returned ' + (student ? student.id + ' ' + student.name : 'null'));
       if (student) {
-        this._pushStudentsToHost();
+        this._pushStudentsToHost([], [student]);
         document.getElementById('reg-error').textContent = '';
         var ok = document.getElementById('reg-ok');
         if (ok) ok.textContent = '✓ 已注册：' + name + '（' + grade + '年级），请在登录页登录';
@@ -16087,4 +16149,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260901-1723';
+window.__SERVER_VER = '20260902-1724';
