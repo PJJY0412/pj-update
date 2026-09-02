@@ -476,6 +476,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         document.addEventListener('visibilitychange', this._visHandler);
       }
       try { this._updateTaskBadge(); } catch (e) {}
+      setTimeout(() => { try { this._pullWrongBank(); } catch (e) {} }, 3000);
+      setTimeout(() => { try { this._pullAccum(); } catch (e) {} }, 3500);
     }
   },
 
@@ -3671,6 +3673,7 @@ main.innerHTML = html;
   },
 
   renderDailyAccumulate() {
+    try { this._pullAccum(); } catch (e) {}
     const main = document.getElementById('main-content');
     const hw = Storage.getHomework(this.currentStudent.id);
     const words = this.getHomeworkWords(hw);
@@ -9884,7 +9887,7 @@ html += '<h1 class="login-title" id="login-title-tts"><span>培</span><span>基<
         var remote = (all || []).find(function (s) { return s.remote && s.name === name; });
         if (remote) {
           if (errEl) errEl.textContent = '已在其他平板注册（' + remote.grade + '年级），本机自动建档登录...';
-          var created = Storage.addStudent(name, remote.grade);
+          var created = Storage.addStudent(name, remote.grade, remote.createdAt);
           if (created) {
             self._pushStudentsToHost();
             self.loginStudent(created.id);
@@ -14793,6 +14796,139 @@ _ttsCancel() {
     try { localStorage.setItem('vocab_lan_host', v); } catch (e) {}
   },
 
+  _onLocalSave(key, studentId) {
+    if (key === 'wrongWords') { this._scheduleWrongBankPush(); }
+    else if (key === 'daily') { this._scheduleAccumPush(); }
+  },
+
+  _scheduleWrongBankPush() {
+    if (this._wrongBankTimer) clearTimeout(this._wrongBankTimer);
+    this._wrongBankTimer = setTimeout(() => { this._pushWrongBank(); }, 2000);
+  },
+
+  _scheduleAccumPush() {
+    if (this._accumTimer) clearTimeout(this._accumTimer);
+    this._accumTimer = setTimeout(() => { this._pushAccum(); }, 2000);
+  },
+
+  _pushWrongBank() {
+    const host = this._getSavedHost();
+    if (!host || !this.currentStudent) return;
+    const words = Storage.getWrongWords();
+    if (!words || !words.length) return;
+    const items = words.map(w => ({
+      wordEn: w.wordEn || '', wordCn: w.wordCn || '',
+      unitTitle: w.unitTitle || '', subject: w.subject || 'english',
+      missedCount: w.missedCount || 0, lastMissed: w.lastMissed || ''
+    }));
+    const body = JSON.stringify({
+      name: this.currentStudent.name,
+      grade: this.currentStudent.grade || '',
+      items: items
+    });
+    this._lanPost('http://' + host + ':8899/wrongbank', body).catch(() => {});
+  },
+
+  _pullWrongBank() {
+    const host = this._getSavedHost();
+    if (!host || !this.currentStudent) return Promise.resolve();
+    return this._lanGet('http://' + host + ':8899/wrongbank?student=' + encodeURIComponent(this.currentStudent.name))
+      .then(r => {
+        if (!r || !r.ok || !r.body) return;
+        let data = null;
+        try { data = JSON.parse(r.body); } catch (e) {}
+        if (!data || !data.items || !data.items.length) return;
+        const local = Storage.getWrongWords();
+        const localMap = {};
+        (local || []).forEach(w => { localMap[w.wordEn] = w; });
+        let changed = false;
+        data.items.forEach(item => {
+          if (!item.wordEn || localMap[item.wordEn]) return;
+          localMap[item.wordEn] = {
+            wordEn: item.wordEn, wordCn: item.wordCn || '',
+            unitTitle: item.unitTitle || '', subject: item.subject || 'english',
+            missedCount: item.missedCount || 0, lastMissed: item.lastMissed || '',
+            unitId: 0
+          };
+          changed = true;
+        });
+        if (changed) {
+          const merged = Object.values(localMap).filter(w => w && w.wordEn);
+          Storage.save('wrongWords', merged);
+        }
+      })
+      .catch(() => {});
+  },
+
+  _pushAccum() {
+    const host = this._getSavedHost();
+    if (!host || !this.currentStudent) return;
+    const dp = Storage.getDailyProgress(this.currentStudent.id);
+    if (!dp || !dp.accum) return;
+    const body = JSON.stringify({
+      name: this.currentStudent.name,
+      grade: this.currentStudent.grade || '',
+      accum: {
+        days: dp.accum.days || {},
+        list: dp.accum.list || [],
+        lv: dp.accum.lv || {},
+        due: dp.accum.due || {},
+        last: dp.accum.last || ''
+      }
+    });
+    this._lanPost('http://' + host + ':8899/accum', body).catch(() => {});
+  },
+
+  _pullAccum() {
+    const host = this._getSavedHost();
+    if (!host || !this.currentStudent) return Promise.resolve();
+    return this._lanGet('http://' + host + ':8899/accum?student=' + encodeURIComponent(this.currentStudent.name))
+      .then(r => {
+        if (!r || !r.ok || !r.body) return;
+        let data = null;
+        try { data = JSON.parse(r.body); } catch (e) {}
+        if (!data || !data.accum) return;
+        const dp = Storage.getDailyProgress(this.currentStudent.id) || { date: '', cursor: 0 };
+        if (!dp.accum) dp.accum = { days: {}, list: [], lv: {}, due: {}, last: '' };
+        const remote = data.accum;
+        let changed = false;
+        if (remote.days) {
+          Object.keys(remote.days).forEach(dayKey => {
+            const remoteIds = remote.days[dayKey] || [];
+            if (!dp.accum.days[dayKey]) dp.accum.days[dayKey] = [];
+            remoteIds.forEach(id => {
+              if (dp.accum.days[dayKey].indexOf(id) < 0) { dp.accum.days[dayKey].push(id); changed = true; }
+            });
+          });
+        }
+        if (remote.list) {
+          if (!dp.accum.list) dp.accum.list = [];
+          remote.list.forEach(id => {
+            if (dp.accum.list.indexOf(id) < 0) { dp.accum.list.push(id); changed = true; }
+          });
+        }
+        if (remote.lv) {
+          if (!dp.accum.lv) dp.accum.lv = {};
+          Object.keys(remote.lv).forEach(id => {
+            const rlv = remote.lv[id] || 0;
+            const llv = dp.accum.lv[id] || 0;
+            if (rlv > llv) { dp.accum.lv[id] = rlv; changed = true; }
+          });
+        }
+        if (remote.due) {
+          if (!dp.accum.due) dp.accum.due = {};
+          Object.keys(remote.due).forEach(id => {
+            const rd = remote.due[id] || '';
+            const ld = dp.accum.due[id] || '';
+            if (!ld || (rd && rd < ld)) { dp.accum.due[id] = rd; changed = true; }
+          });
+        }
+        if (remote.last && remote.last > (dp.accum.last || '')) { dp.accum.last = remote.last; changed = true; }
+        if (changed) Storage.saveDailyProgress(this.currentStudent.id, dp);
+      })
+      .catch(() => {});
+  },
+
   _bindHostInput(id) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -14955,6 +15091,7 @@ _ttsCancel() {
   },
 
   renderReviewWords() {
+    try { this._pullWrongBank(); } catch (e) {}
     this.currentView = 'review';
     const main = document.getElementById('main-content');
     const wrongWords = Storage.getWrongWords();
@@ -16176,4 +16313,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260902-1725';
+window.__SERVER_VER = '20260902-1726';
