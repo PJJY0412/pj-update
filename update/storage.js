@@ -216,6 +216,14 @@ const Storage = {
     }
   },
 
+  // 学年起点年：9 月开学，1-8 月注册属上一学年（学年中段），9-12 月注册属本学年。
+  // 供 addStudent/_ensureStudentIds/getCurrentGrade 共用（勿回退为注册日自然年，否则 8/31 后无法自动升年级）
+  _academicStartYear(regDate) {
+    const d = (regDate instanceof Date && !isNaN(regDate.getTime())) ? regDate : null;
+    if (!d) return new Date().getFullYear();
+    return d.getFullYear() - (d.getMonth() < 8 ? 1 : 0);
+  },
+
   // 给缺失 id 的学员补唯一数字 id（云端/电脑 /students.json 只回 name/grade/createdAt 无 id，
   // 旧版 merge 原样入库曾导致所有学员 id=undefined → 登录串台、作业共用同一本地键）。一次性自愈。
   _ensureStudentIds(list) {
@@ -232,7 +240,7 @@ const Storage = {
         seen.add(String(id));
         changed = true;
       }
-      if (s.gradeStartYear == null) s.gradeStartYear = new Date().getFullYear();
+      if (s.gradeStartYear == null) s.gradeStartYear = this._academicStartYear(s.createdAt ? new Date(s.createdAt) : new Date());
       if (s.createdAt == null) s.createdAt = new Date().toISOString();
     });
     return changed;
@@ -256,8 +264,8 @@ const Storage = {
       id: Date.now(),
       name: name,
       grade: grade || 1,
-      gradeStartYear: new Date().getFullYear(),
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      gradeStartYear: this._academicStartYear(new Date())
     };
     students.push(student);
     this.save('students', students);
@@ -270,9 +278,18 @@ const Storage = {
     const now = new Date();
     const cutoff = new Date(now.getFullYear(), 7, 31);
     const base = Number(student.grade) || 1;
-    const yearsPassed = now.getFullYear() - (student.gradeStartYear || (student.createdAt ? new Date(student.createdAt).getFullYear() : now.getFullYear()));
-    if (now > cutoff) return Math.min(6, base + Math.max(0, yearsPassed));
-    return Math.min(6, base + Math.max(0, yearsPassed - 1));
+    // 学年起点：有注册时间则按 1-8 月注册属上一学年折算（8/31 后自动升年级），
+    // 无 createdAt 的旧记录沿用旧口径（gradeStartYear 视为注册自然年）保证行为不突变
+    let start;
+    if (student.createdAt) {
+      start = this._academicStartYear(new Date(student.createdAt));
+    } else if (student.gradeStartYear != null) {
+      start = Number(student.gradeStartYear);
+    } else {
+      start = now.getFullYear();
+    }
+    const acadNow = now > cutoff ? now.getFullYear() : now.getFullYear() - 1;
+    return Math.min(6, base + Math.max(0, acadNow - start));
   },
 
   getSubject() {
