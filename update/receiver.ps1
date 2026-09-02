@@ -2126,7 +2126,7 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
                     $key = [string]$r.toName
                     if (-not $counts.ContainsKey($key)) { $counts[$key] = 0 }
                     $counts[$key]++
-                    if ($counts[$key] -gt 40) { continue }
+                    if ($counts[$key] -gt 80) { continue }
                     $keep += $r
                 }
                 [array]::Reverse($keep)
@@ -2628,3 +2628,4 @@ try {
 } catch {}
 
 [System.Windows.Forms.Application]::Run()
+
