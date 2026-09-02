@@ -292,11 +292,17 @@ const Storage = {
 
   mergeStudents(list) {
     if (!Array.isArray(list) || !list.length) return;
-    const existing = this.getStudents();
+    // 墓碑防复活：本地有"已删学员"记录（pendingStudentRemovals）时，合并名单中该学员一律跳过，
+    // 且本地残留的同名学员一并剔除，确保已删学员不会被云端/局域网名单合回来（勿回退）
+    const tombstones = this.getPendingStudentRemovals();
+    const dead = {};
+    tombstones.forEach(r => { if (r && r.name) dead[String(r.name)] = true; });
+    const existing = this.getStudents().filter(s => !(s && s.name && dead[String(s.name)]));
     const dict = {};
     existing.forEach(s => { if (s && s.name) dict[s.name] = s; });
     list.forEach(incoming => {
       if (!incoming || !incoming.name) return;
+      if (dead[String(incoming.name)]) return;
       const local = dict[incoming.name];
       if (local) {
         // 本地已有该学员：保留本地真实身份（id/年级/入学年/注册时间）以维持学习数据关联，仅补前端缺失字段
