@@ -15567,9 +15567,15 @@ _ttsCancel() {
             if (!Array.isArray(msgs)) msgs = [msgs];
             const maxT = msgs.reduce((mx, m) => (m && m.time && m.time > mx ? m.time : mx), 0);
             if (maxT > 0) { try { localStorage.setItem(sinceKey, String(maxT)); } catch (e) {} }
-            const r = this._applyTasks(msgs, myName, myId, myGrade);
-            this._applyTaskResult(r);
-            try { this._tasksLog('拉取 ' + r.count + ' 条，发给我的 ' + r.mineCount + ' 条，新增 ' + r.taskAdded + ' 题；（局域网 ' + (tasks !== null ? '已取' : '不可用') + '）'); } catch (e) {}
+            // 局域网已取到完整 LAN 副本时，云端仅用于推进 since 游标、不再用其历史消息覆盖落库（LAN 优先）；
+            // 仅当局域网不可用时，才以云端消息兜底。
+            if (tasks === null) {
+              const r = this._applyTasks(msgs, myName, myId, myGrade);
+              this._applyTaskResult(r);
+              try { this._tasksLog('拉取 ' + r.count + ' 条，发给我的 ' + r.mineCount + ' 条，新增 ' + r.taskAdded + ' 题；（局域网不可用，云端兜底）'); } catch (e) {}
+            } else {
+              try { this._tasksLog('云端已取（仅推进游标），局域网完整副本优先'); } catch (e) {}
+            }
           })
           .catch(e => {
             try { this._tasksLog('拉取失败：' + (e && e.message || e) + '（可能无外网）'); } catch (e2) {}
@@ -16313,4 +16319,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260902-1726';
+window.__SERVER_VER = '20260902-1727';
