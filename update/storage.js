@@ -88,6 +88,9 @@ const Storage = {
       console.warn('Storage full:', e);
     }
     this.scheduleBackup();
+    if ((key === 'wrongWords' || key === 'daily') && window.App && typeof App._onLocalSave === 'function') {
+      try { App._onLocalSave(key, this._studentId); } catch (e) {}
+    }
   },
 
   scheduleBackup() {
@@ -255,17 +258,24 @@ const Storage = {
     return list;
   },
 
-  addStudent(name, grade) {
+  addStudent(name, grade, createdAt) {
     const prev = this._studentId;
     this._studentId = null;
     const students = this.getStudents();
     if (students.find(s => s.name === name)) { this._studentId = prev; return null; }
+    // 远端自动建档（其他平板已注册 → 本机重建）必须沿用远端原始注册时间，
+    // 否则 8/31 学年滚动后本机算出的当前年级会差一级，回流改写电脑端学员库文件夹（勿回退）
+    let created = new Date();
+    if (createdAt) {
+      const d = new Date(createdAt);
+      if (!isNaN(d.getTime())) created = d;
+    }
     const student = {
       id: Date.now(),
       name: name,
       grade: grade || 1,
-      createdAt: new Date().toISOString(),
-      gradeStartYear: this._academicStartYear(new Date())
+      createdAt: created.toISOString(),
+      gradeStartYear: this._academicStartYear(created)
     };
     students.push(student);
     this.save('students', students);
@@ -327,7 +337,15 @@ const Storage = {
         keep.id = local.id;
         if (local.grade != null) keep.grade = local.grade;
         if (local.gradeStartYear != null) keep.gradeStartYear = local.gradeStartYear;
-        if (local.createdAt != null) keep.createdAt = local.createdAt;
+        // 注册时间取"最早"：远端自动建档的副本（晚于原始注册）若不收敛，8/31 学年滚动后
+        // 各设备算出的当前年级相差 1，会交替改写电脑端学员库文件夹（二年级↔三年级 往复）。
+        // 统一取最早注册时间让所有设备口径一致（勿回退）
+        let locT = null, incT = null;
+        if (local.createdAt) { const d = new Date(local.createdAt); if (!isNaN(d.getTime())) locT = d.getTime(); }
+        if (incoming.createdAt) { const d = new Date(incoming.createdAt); if (!isNaN(d.getTime())) incT = d.getTime(); }
+        if (locT != null && incT != null && incT < locT) keep.createdAt = incoming.createdAt;
+        else if (locT == null && incT != null) keep.createdAt = incoming.createdAt;
+        else if (locT != null) keep.createdAt = local.createdAt;
         dict[incoming.name] = keep;
       } else {
         dict[incoming.name] = incoming;
