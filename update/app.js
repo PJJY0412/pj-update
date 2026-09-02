@@ -5233,9 +5233,13 @@ main.innerHTML = html;
 
     const grade = allGrades.find(x => x.id === st.gradeId);
     if (grade) {
-      const pickLabel = st.subject === 'chinese' ? '点点选汉字（可多选，展开逐字勾选）' : st.subject === 'math' ? '点单元选算式/口诀（可多选，可展开逐项勾选）' : '点单元选单词/短语（可多选，可展开逐词勾选）';
-      html += '<h4 style="margin:12px 0 6px;color:var(--primary)">' + pickLabel + '</h4>';
-      html += '<div style="max-height:340px;overflow-y:auto;border:1px solid #EEE;border-radius:8px;padding:8px 10px">';
+      const pickLabel = st.subject === 'chinese' ? '点单元选汉字（可多选，展开逐字勾选）' : st.subject === 'math' ? '点单元选算式/口诀（可多选，可展开逐项勾选）' : '点单元选单词/短语（可多选，可展开逐词勾选）';
+      const pickIcon = st.subject === 'chinese' ? '📘' : st.subject === 'math' ? '🧮' : '📗';
+      html += '<div class="hw-sec-card">';
+      html += '<div class="hw-sec-head"><span class="hw-sec-icon">' + pickIcon + '</span><span>' + pickLabel + '</span></div>';
+      html += '<div class="hw-sec-body">';
+      html += '<p class="hw-sec-hint">点击单元行展开，逐项勾选或整单元全选</p>';
+      html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #EEE;border-radius:8px;padding:8px 10px">';
       grade.modules.forEach(m => {
         m.units.forEach(u => {
           const uk = (w) => {
@@ -5278,6 +5282,8 @@ main.innerHTML = html;
         });
       });
       html += '</div>';
+      html += '</div>';
+      html += '</div>';
     } else {
       html += '<p style="color:#C62828;font-size:13px">未找到该年级课程数据</p>';
     }
@@ -5294,8 +5300,11 @@ main.innerHTML = html;
         if (t && String(q.subject) === st.subject) pickItems.push({ src: 'wrong', text: t, name: s.name });
       });
     });
-    html += '<h4 style="margin:14px 0 6px;color:var(--primary)">📥 从错题库选题（点击即加入作业，不校验词库）</h4>';
-    html += '<div style="border:1px solid #FFE082;background:#FFF8E1;border-radius:8px;padding:8px 10px;max-height:240px;overflow-y:auto">';
+    html += '<div class="hw-sec-card">';
+    html += '<div class="hw-sec-head"><span class="hw-sec-icon">📥</span><span>从错题库选题</span></div>';
+    html += '<div class="hw-sec-body">';
+    html += '<p class="hw-sec-hint">点击即加入作业，不校验词库</p>';
+    html += '<div style="border:1px solid #FFE082;background:#FFF8E1;border-radius:8px;padding:8px 10px;max-height:200px;overflow-y:auto">';
     if (pickItems.length === 0) {
       html += '<div style="font-size:12px;color:var(--text-light)">错题库暂无 ' + this._subjName(st.subject) + ' 题目（可在"扫描入库"中勾选错题生成）</div>';
     } else {
@@ -5309,10 +5318,15 @@ main.innerHTML = html;
       });
     }
     html += '</div>';
+    html += '</div>';
+    html += '</div>';
 
     const manuLabel = st.subject === 'chinese' ? '手动补充汉字' : st.subject === 'math' ? '手动补充算式/口诀' : '手动补充单词';
     const manuPh = st.subject === 'chinese' ? '输入汉字，多个用逗号分隔' : st.subject === 'math' ? '输入算式或口诀，多个用逗号分隔' : '输入单词，多个用逗号分隔';
-    html += '<h4 style="margin:14px 0 6px;color:var(--primary)">' + manuLabel + '</h4>';
+    const manuIcon = st.subject === 'chinese' ? '✏️' : st.subject === 'math' ? '🔢' : '📝';
+    html += '<div class="hw-sec-card">';
+    html += '<div class="hw-sec-head"><span class="hw-sec-icon">' + manuIcon + '</span><span>' + manuLabel + '</span></div>';
+    html += '<div class="hw-sec-body">';
     html += '<div style="display:flex;gap:6px">';
     html += '<input type="text" class="login-input" id="hw-manual-input" placeholder="' + manuPh + '" style="flex:1" autocomplete="off">';
     html += '<button class="admin-gen-btn" id="hw-manual-add">添加</button>';
@@ -5329,6 +5343,8 @@ main.innerHTML = html;
       });
       html += '</div>';
     }
+    html += '</div>';
+    html += '</div>';
 
     const unitWordTxt = st.subject === 'chinese' ? '字' : st.subject === 'math' ? '题' : '词';
     const pickedCount = Object.keys(st.picked).length;
@@ -5493,25 +5509,34 @@ main.innerHTML = html;
     });
     const host = this._getSavedHost();
     const doCloud = () => {
-      if (!host) {
-        if (!anyLocal) alert('未填写电脑 IP，作业无法发送到学员平板');
-        return;
-      }
       targets.forEach(t => {
         const msg = {
           type: 'homework',
           toName: t.name,
+          toId: t.localId != null ? String(t.localId) : '',
           toGrade: String(t.grade != null ? t.grade : ''),
           subject: st.subject,
           hw: hw,
           from: '老师',
           sentAt: new Date().toISOString()
         };
-        fetch(Storage.getTaskTopic(), { method: 'PUT', body: JSON.stringify(msg) }).catch(() => {});
-        try { this._lanTaskPush(msg); } catch (e) {}
+        // 云端 ntfy 与电脑 IP 无关：有外网即尽力推送，失败静默（下次 LAN 全量拉取兜底）
+        if (typeof fetch === 'function') {
+          fetch(Storage.getTaskTopic(), { method: 'PUT', body: JSON.stringify(msg) })
+            .catch(e => { try { this._tasksLog('作业云端推送失败：' + String((e && e.message) || e)); } catch (e2) {} });
+        }
+        // 局域网：电脑 IP 优先；为空则兜底本机（电脑网页版与 receiver 同机）→ 保证任务必入任务缓存，平板经电脑 IP 即可拉到
+        try {
+          if (host) this._lanTaskPush(msg);
+          else {
+            const localHost = (window.location && window.location.hostname) ? window.location.hostname : '127.0.0.1';
+            this._lanTaskPush(msg, localHost);
+          }
+        } catch (e) {}
       });
     };
     try { doCloud(); } catch (e) {}
+    if (!host && !anyLocal) alert('未填写电脑 IP：作业已尽力写入本机接收器缓存与云端，若平板仍收不到请在登录页填写电脑 IP');
     this._hwEditor = null;
     this._hwEditorStudent = null;
     this._renderAdminHomework();
@@ -8647,9 +8672,9 @@ students.forEach(s => {
       .catch(e => { clearTimeout(timer); throw e; });
   },
 
-  _lanTaskPush(msg) {
+  _lanTaskPush(msg, hostOverride) {
     try {
-      const host = this._getSavedHost();
+      const host = hostOverride || this._getSavedHost();
       if (!host) return;
       this._lanPost('http://' + host + ':8899/task-push', JSON.stringify(msg)).catch(() => {});
     } catch (e) {}
@@ -8711,7 +8736,7 @@ students.forEach(s => {
       // 先尝试局域网
       if (host) {
         return this._lanPost('http://' + host + ':8899/students', payload).then(res => {
-          onOk();
+          if (res && res.ok === true) onOk();
           return res;
         }).catch(() => this._pushStudentsToCloud(payload, onOk));
       }
@@ -15317,7 +15342,9 @@ _ttsCancel() {
       try { d = JSON.parse(m.message); } catch (e) {}
       if (!d) return;
       if (d.type === 'homework' && d.hw) {
-        if (norm(d.toName) !== norm(myName)) return;
+        const nameOk = norm(d.toName) === norm(myName);
+        const idOk = d.toId !== undefined && d.toId !== null && String(d.toId) !== '' && String(d.toId) === String(myId);
+        if (!nameOk && !idOk) return;
         const sid = myId;
         const hw = d.hw;
         if (d.subject === 'chinese') Storage.saveHomeworkZh(sid, hw);
@@ -15375,7 +15402,7 @@ _ttsCancel() {
   _pullRemoteHomework() {
     try { this._pullGradedAnswers(); } catch (e) {}
     try {
-      const me = (Storage.getStudents() || []).find(s => s.id === Storage.getStudent());
+      const me = (Storage.getStudents() || []).find(s => String(s.id) === String(Storage.getStudent()));
       const myName = me ? me.name : '';
       const myId = Storage.getStudent();
       const myGrade = me ? String(Storage.getCurrentGrade(me)) : '';
@@ -16149,4 +16176,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260902-1724';
+window.__SERVER_VER = '20260902-1725';
