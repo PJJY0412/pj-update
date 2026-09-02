@@ -3681,11 +3681,9 @@ main.innerHTML = html;
 
     const today = new Date().toDateString();
     const dp = Storage.getDailyProgress(this.currentStudent.id) || { date: '', cursor: 0 };
-    const finished = dp.cursor >= words.length;
-    const doneToday = dp.date === today && dp.cursor > 0;
-    const start = dp.cursor > 0 ? Math.min(dp.cursor, words.length) : 0;
-    const batchEnd = words.length;
-    const todayWords = words.slice(start, batchEnd);
+    const doneToday = dp.date === today && dp.cursor >= words.length && dp.cursor > 0;
+    // 今日新词 = 全部布置词（不按本地遗留 dp.cursor 切分，避免 12 词被切成分裂/读一半）
+    const todayWords = words;
     const stars = doneToday ? Math.max(1, Math.min(3, dp.stars || 1)) : 0;
 
     let streakDays = 0;
@@ -3785,21 +3783,13 @@ main.innerHTML = html;
     if (doneToday) {
       html += '<div style="background:#FFF8E1;border:1px solid #FFE082;border-radius:12px;padding:14px;margin-bottom:14px;text-align:center">';
       html += '<div style="font-size:28px">🏅</div>';
-      html += '<div style="font-size:16px;font-weight:700;color:#E65100;margin-top:4px">今日闯关完成' + (finished ? ' · 作业全部学完 🎉' : '') + '</div>';
+      html += '<div style="font-size:16px;font-weight:700;color:#E65100;margin-top:4px">今日闯关完成 · 作业全部学完 🎉</div>';
       html += '<div style="font-size:24px;letter-spacing:6px;color:#FFB300;margin-top:6px">' + '★'.repeat(stars) + '☆'.repeat(3 - stars) + '</div>';
-      html += '<div style="font-size:12px;color:#795548;margin-top:4px">' + (finished ? '明天自动开启新词，坚持就是胜利！' : '明天继续新词，坚持就是胜利！') + '</div>';
+      html += '<div style="font-size:12px;color:#795548;margin-top:4px">明天自动开启新词，坚持就是胜利！</div>';
       html += '</div>';
       html += freeHtml;
       html += '<button class="daily-mode-btn" data-mode="review" style="width:100%;margin-bottom:10px">🔄 复习全部 ' + words.length + ' 词</button>';
       html += '<button class="login-btn" id="acc-back-practice" style="width:100%">✅ 返回每天必练</button>';
-    } else if (finished) {
-      html += '<div style="background:#E8F5E9;border:1px solid #A5D6A7;border-radius:12px;padding:14px;margin-bottom:14px;text-align:center">';
-      html += '<div style="font-size:28px">🎉</div>';
-      html += '<div style="font-size:16px;font-weight:700;color:#2E7D32;margin-top:4px">所有作业单词已学完！</div>';
-      html += '<div style="font-size:12px;color:#558B2F;margin-top:4px">随时可以复习巩固，保持手感</div>';
-      html += '</div>';
-      html += freeHtml;
-      html += '<button class="daily-mode-btn" data-mode="review" style="width:100%">🔄 复习全部 ' + words.length + ' 词</button>';
     } else {
       html += '<div style="margin-bottom:14px;font-size:13px;color:var(--text-light)">今日新词（' + todayWords.length + ' 个）：';
       html += '<div style="margin-top:6px">';
@@ -8630,7 +8620,17 @@ students.forEach(s => {
       const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
       setTimeout(() => finish({ ok: false, err: 'timeout' }), 3000);
       if (window.AndroidLan) {
-        try { window.AndroidLan.post(url, jsonBody, cb); return; } catch (e) {}
+        try {
+          window.AndroidLan.post(url, jsonBody, cb);
+          setTimeout(() => {
+            if (!settled) {
+              fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: jsonBody })
+                .then(r => r.text().then(t => finish({ ok: r.ok, status: r.status, body: t })))
+                .catch(e => finish({ ok: false, err: String(e) }));
+            }
+          }, 1200);
+          return;
+        } catch (e) {}
       }
       fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: jsonBody })
         .then(r => r.text().then(t => finish({ ok: r.ok, status: r.status, body: t })))
@@ -16319,4 +16319,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260902-1727';
+window.__SERVER_VER = '20260903-1728';
