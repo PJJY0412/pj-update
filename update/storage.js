@@ -1,4 +1,4 @@
-// 机构装机码：只有输入此码的设备才能使用本应用（请机构管理员妥善保管，勿发给老师）
+﻿// 机构装机码：只有输入此码的设备才能使用本应用（请机构管理员妥善保管，勿发给老师）
 const INSTALL_CODE = 'PJJY250412';
 const MANAGER_PW = 'PJJY250412';
 
@@ -1208,4 +1208,3 @@ const Storage = {
   }
 };
 window.__OK_storage = true;
-window.__SERVER_VER = '20260814-1580';
