@@ -15,7 +15,7 @@ $deletedStudentsFile = Join-Path $PSScriptRoot '已删学员.json'
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260902-1'
+$script:SelfVer = '20260903-1'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -918,6 +918,68 @@ function Get-CloudUpdMeta {
     return $null
 }
 
+# 读出 .js 文件内嵌版本号（兼容 __SERVER_VER / __BUILTIN_VER 两种标记；取到哪一个用哪一个）
+function Get-JsVersion($path) {
+    if (-not (Test-Path $path)) { return '' }
+    try {
+        $c = [System.IO.File]::ReadAllText($path)
+        $m1 = [regex]::Match($c, "__SERVER_VER\s*=\s*'([^']+)'")
+        if ($m1.Success) { return $m1.Groups[1].Value }
+        $m2 = [regex]::Match($c, "__BUILTIN_VER\s*=\s*'([^']+)'")
+        if ($m2.Success) { return $m2.Groups[1].Value }
+    } catch {}
+    return ''
+}
+
+# 清除陈旧 JS（1580 类）：凡公司电脑上由本机供给/镜像的 JS 文件，其内嵌版本号低于云端当前版本即强制刷新，
+# 确保平板经 /js/app.js、/js/storage.js 拉到的是当前版，而非卡死在 20260814-1580 的旧副本。
+function Clear-StaleServedJs {
+    # 开发机保护：与 Sync-CloudUpdateDir 同源，存在标记则跳过，防止云端旧版覆盖本地未发布改动
+    if (Test-Path (Join-Path $PSScriptRoot 'no-cloud-sync.dev')) { return }
+    $v = Get-CloudUpdMeta
+    if ($null -eq $v) { Log '清除陈旧JS：无法获取云端版本信息，跳过'; return }
+    $jsMeta = @{}
+    foreach ($fn in @('app.js', 'storage.js')) {
+        try { $jsMeta[$fn] = $v.files.$fn } catch {}
+        if ($null -eq $jsMeta[$fn]) { $jsMeta[$fn] = $null }
+    }
+    foreach ($fn in @('app.js', 'storage.js')) {
+        $meta = $jsMeta[$fn]
+        if ($null -eq $meta -or [string]::IsNullOrEmpty($meta.version)) { continue }
+        $cv = [string]$meta.version
+        # 本机供给权威副本：$updDir\app.js / $updDir\storage.js
+        $canon = Join-Path $updDir $fn
+        if (Test-Path $canon) {
+            $lv = Get-JsVersion $canon
+            if ($lv -and [string]::Compare($lv, $cv, [System.StringComparison]::Ordinal) -lt 0) {
+                Log ("清除陈旧JS：{0} 内嵌版本 {1} 早于云端 {2}，强制刷新" -f $fn, $lv, $cv)
+                if ($meta.url -and (Update-SingleCloudFile $canon $meta.url $meta.hash)) {
+                    Log ("清除陈旧JS：{0} 已刷新为 {1}" -f $fn, $cv)
+                } else {
+                    Log ("清除陈旧JS：{0} 刷新失败（网络/校验），保留原样待重试" -f $fn)
+                }
+            } else {
+                Log ("清除陈旧JS：{0} 版本 {1} 不低于云端，无需处理" -f $fn, ($(if ($lv) { $lv } else { '未检测到' })))
+            }
+        }
+        # 桌面网页版镜像：<receiver上一级>\js\app.js / js\storage.js
+        $webDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'js'
+        if (Test-Path $webDir) {
+            $dst = Join-Path $webDir $fn
+            if (Test-Path $dst) {
+                $wv = Get-JsVersion $dst
+                if ($wv -and [string]::Compare($wv, $cv, [System.StringComparison]::Ordinal) -lt 0) {
+                    $src = Join-Path $updDir $fn
+                    if (Test-Path $src) {
+                        Copy-Item $src $dst -Force
+                        Log ("清除陈旧JS：网页版 js\{0} 已从 {1} 镜像刷新为 {2}" -f $fn, $wv, $cv)
+                    }
+                }
+            }
+        }
+    }
+}
+
 function Update-SingleCloudFile($target, $urlList, $expHash, $TimeoutSec = 300) {
     # $urlList 可传单个 url 字符串或数组（主源+镜像），依次尝试直到校验通过
     if ($null -eq $urlList) { return $false }
@@ -1396,6 +1458,7 @@ function Handle-Http {
             $swS.Start()
             Log ("收到手动云端同步请求（来自 {0}）" -f $clientIp)
             try { Sync-CloudUpdateDir } catch { Log ("云端同步异常: {0}" -f $_.Exception.Message) }
+            try { Clear-StaleServedJs } catch { Log ("清除陈旧JS异常: {0}" -f $_.Exception.Message) }
             $swS.Stop()
             $respS = @{ ok = $true; ms = [int]$swS.ElapsedMilliseconds } | ConvertTo-Json -Compress
             Send-Response $stream '200 OK' 'application/json' $respS
@@ -2731,6 +2794,7 @@ $timer.add_Tick({
     }
     if ((Get-Date) -ge $script:nextCloudSync) {
         try { Sync-CloudUpdateDir } catch { Log ("云端同步异常: {0}" -f $_.Exception.Message) }
+        try { Clear-StaleServedJs } catch { Log ("清除陈旧JS异常: {0}" -f $_.Exception.Message) }
         try { Sync-SelfUpdate } catch { Log ("自举更新异常: {0}" -f $_.Exception.Message) }
         $script:nextCloudSync = (Get-Date).AddMinutes(10)
     }
