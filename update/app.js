@@ -3681,7 +3681,11 @@ main.innerHTML = html;
 
     const today = new Date().toDateString();
     const dp = Storage.getDailyProgress(this.currentStudent.id) || { date: '', cursor: 0 };
-    const doneToday = dp.date === today && dp.cursor >= words.length && dp.cursor > 0;
+    // 今日是否学完 = 当天积累文件夹已覆盖当前全部布置词（不依赖本地遗留 dp.cursor，
+    // 以免换批/跨设备/旧版升级后 cursor 残留导致"开始今日闯关"永久消失）
+    const todayKeyA = this._gardenDateStr(0);
+    const accTodayIdsA = (((dp.accum && dp.accum.days) || {})[todayKeyA] || []).slice();
+    const doneToday = words.length > 0 && words.every(w => accTodayIdsA.indexOf(String(w.en || w.zi).toLowerCase().trim()) >= 0);
     // 今日新词 = 全部布置词（不按本地遗留 dp.cursor 切分，避免 12 词被切成分裂/读一半）
     const todayWords = words;
     const stars = doneToday ? Math.max(1, Math.min(3, dp.stars || 1)) : 0;
@@ -3717,7 +3721,8 @@ main.innerHTML = html;
     html += '<h2 class="course-title">📅 日积月累</h2>';
     html += '<div style="padding:0 16px">';
     html += '<div style="display:flex;gap:8px;margin-bottom:14px">';
-    html += '<div style="flex:1;background:#E3F2FD;border:1px solid #90CAF9;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#0D47A1"><div style="font-size:20px;font-weight:700">' + Math.min(dp.cursor, words.length) + '/' + words.length + '</div>今日进度</div>';
+    const todayLearnedCount = words.filter(w => accTodayIdsA.indexOf(String(w.en || w.zi).toLowerCase().trim()) >= 0).length;
+    html += '<div style="flex:1;background:#E3F2FD;border:1px solid #90CAF9;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#0D47A1"><div style="font-size:20px;font-weight:700">' + todayLearnedCount + '/' + words.length + '</div>今日进度</div>';
     html += '<div style="flex:1;background:#FFF8E1;border:1px solid #FFE082;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#5D4037"><div style="font-size:20px;font-weight:700">' + accCount + '</div>已积累<br>共 ' + accDays + ' 天</div>';
     html += '<div style="flex:1;background:' + (streakDays > 0 ? '#FFE0B2' : '#F5F7FA') + ';border:1px solid ' + (streakDays > 0 ? '#FFB74D' : '#E0E0E0') + ';border-radius:10px;padding:10px;text-align:center;font-size:12px;color:' + (streakDays > 0 ? '#E65100' : 'var(--text-light)') + '"><div style="font-size:20px;font-weight:700">' + streakDays + '🔥</div>连续学习</div>';
     html += '</div>';
@@ -16319,4 +16324,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260903-1728';
+window.__SERVER_VER = '20260903-1729';
