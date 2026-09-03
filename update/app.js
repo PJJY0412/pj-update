@@ -462,6 +462,16 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       this.hearts = this.progress.hearts;
       this.currentSubject = 'english';
       this._prewarmAudio();
+      // Clear local wrongWords + daily, then pull fresh from computer (authoritative)
+      Storage.save('wrongWords', []);
+      const emptyDaily = { date: '', cursor: 0, stars: 0, log: {}, trophies: {}, accum: { days: {}, list: [], lv: {}, due: {}, last: '' } };
+      Storage.saveDailyProgress(id, emptyDaily);
+      const loadTimer = setTimeout(() => { this._showLoading('正从电脑读取，请稍候！'); }, 2000);
+      Promise.all([
+        this._pullWrongBank(true),
+        this._pullAccum(true)
+      ]).then(() => { clearTimeout(loadTimer); this._hideLoading(); })
+        .catch(() => { clearTimeout(loadTimer); this._hideLoading(); });
       this.renderSubjectSelector();
       if (this._taskPollTimer) { clearInterval(this._taskPollTimer); this._taskPollTimer = null; }
       const poll = () => { try { this._pullRemoteHomework(); } catch (e) {} };
@@ -471,13 +481,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
         this._visHandler = () => {
           if (document.visibilityState === 'visible' && this.currentStudent) {
             try { this._pullRemoteHomework(); } catch (e) {}
+            try { this._pullWrongBank(); } catch (e) {}
+            try { this._pullAccum(); } catch (e) {}
           }
         };
         document.addEventListener('visibilitychange', this._visHandler);
       }
       try { this._updateTaskBadge(); } catch (e) {}
-      setTimeout(() => { try { this._pullWrongBank(); } catch (e) {} }, 3000);
-      setTimeout(() => { try { this._pullAccum(); } catch (e) {} }, 3500);
     }
   },
 
@@ -817,6 +827,12 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
 
   renderMemoryGarden() {
+    if (!this._getSavedHost()) { this._renderMemoryGardenInner(); return; }
+    const glTimer = setTimeout(() => { this._showLoading('正从电脑读取，请稍候！'); }, 2000);
+    this._pullAccum().then(() => { clearTimeout(glTimer); this._hideLoading(); this._renderMemoryGardenInner(); }).catch(() => { clearTimeout(glTimer); this._hideLoading(); this._renderMemoryGardenInner(); });
+  },
+
+  _renderMemoryGardenInner() {
     const main = document.getElementById('main-content');
     const hw = Storage.getHomework(this.currentStudent.id);
     const words = this.getHomeworkWords(hw);
@@ -3673,7 +3689,12 @@ main.innerHTML = html;
   },
 
   renderDailyAccumulate() {
-    try { this._pullAccum(); } catch (e) {}
+    if (!this._getSavedHost()) { this._renderDailyAccumulateInner(); return; }
+    const alTimer = setTimeout(() => { this._showLoading('正从电脑读取，请稍候！'); }, 2000);
+    this._pullAccum().then(() => { clearTimeout(alTimer); this._hideLoading(); this._renderDailyAccumulateInner(); }).catch(() => { clearTimeout(alTimer); this._hideLoading(); this._renderDailyAccumulateInner(); });
+  },
+
+  _renderDailyAccumulateInner() {
     const main = document.getElementById('main-content');
     const hw = Storage.getHomework(this.currentStudent.id);
     const words = this.getHomeworkWords(hw);
@@ -14801,6 +14822,22 @@ _ttsCancel() {
     try { localStorage.setItem('vocab_lan_host', v); } catch (e) {}
   },
 
+  _showLoading(msg) {
+    if (this._loadingOverlay) return;
+    const d = document.createElement('div');
+    d.id = 'loading-overlay';
+    d.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:99999';
+    d.innerHTML = '<div style="background:#fff;border-radius:14px;padding:20px 28px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.2)"><div style="font-size:18px;font-weight:700;color:#333">' + (msg || '加载中…') + '</div><div style="font-size:13px;color:#888;margin-top:6px">请稍候</div></div>';
+    document.body.appendChild(d);
+    this._loadingOverlay = d;
+  },
+  _hideLoading() {
+    if (this._loadingOverlay) {
+      try { this._loadingOverlay.parentNode.removeChild(this._loadingOverlay); } catch(e) {}
+      this._loadingOverlay = null;
+    }
+  },
+
   _onLocalSave(key, studentId) {
     if (key === 'wrongWords') { this._scheduleWrongBankPush(); }
     else if (key === 'daily') { this._scheduleAccumPush(); }
@@ -14834,7 +14871,7 @@ _ttsCancel() {
     this._lanPost('http://' + host + ':8899/wrongbank', body).catch(() => {});
   },
 
-  _pullWrongBank() {
+  _pullWrongBank(replace) {
     const host = this._getSavedHost();
     if (!host || !this.currentStudent) return Promise.resolve();
     return this._lanGet('http://' + host + ':8899/wrongbank?student=' + encodeURIComponent(this.currentStudent.name))
@@ -14842,7 +14879,18 @@ _ttsCancel() {
         if (!r || !r.ok || !r.body) return;
         let data = null;
         try { data = JSON.parse(r.body); } catch (e) {}
-        if (!data || !data.items || !data.items.length) return;
+        if (!data || !data.items) return;
+        if (replace) {
+          const items = (data.items || []).map(item => ({
+            wordEn: item.wordEn, wordCn: item.wordCn || '',
+            unitTitle: item.unitTitle || '', subject: item.subject || 'english',
+            missedCount: item.missedCount || 0, lastMissed: item.lastMissed || '',
+            unitId: 0
+          })).filter(w => w.wordEn);
+          Storage.save('wrongWords', items);
+          return;
+        }
+        if (!data.items.length) return;
         const local = Storage.getWrongWords();
         const localMap = {};
         (local || []).forEach(w => { localMap[w.wordEn] = w; });
@@ -14869,22 +14917,16 @@ _ttsCancel() {
     const host = this._getSavedHost();
     if (!host || !this.currentStudent) return;
     const dp = Storage.getDailyProgress(this.currentStudent.id);
-    if (!dp || !dp.accum) return;
+    if (!dp) return;
     const body = JSON.stringify({
       name: this.currentStudent.name,
       grade: this.currentStudent.grade || '',
-      accum: {
-        days: dp.accum.days || {},
-        list: dp.accum.list || [],
-        lv: dp.accum.lv || {},
-        due: dp.accum.due || {},
-        last: dp.accum.last || ''
-      }
+      daily: dp
     });
     this._lanPost('http://' + host + ':8899/accum', body).catch(() => {});
   },
 
-  _pullAccum() {
+  _pullAccum(replace) {
     const host = this._getSavedHost();
     if (!host || !this.currentStudent) return Promise.resolve();
     return this._lanGet('http://' + host + ':8899/accum?student=' + encodeURIComponent(this.currentStudent.name))
@@ -14892,10 +14934,17 @@ _ttsCancel() {
         if (!r || !r.ok || !r.body) return;
         let data = null;
         try { data = JSON.parse(r.body); } catch (e) {}
-        if (!data || !data.accum) return;
+        if (!data) return;
+        if (replace) {
+          const dailyBlob = data.daily || data;
+          if (dailyBlob) Storage.saveDailyProgress(this.currentStudent.id, dailyBlob);
+          return;
+        }
+        const remoteDaily = data.daily || data;
+        if (!remoteDaily || !remoteDaily.accum) return;
         const dp = Storage.getDailyProgress(this.currentStudent.id) || { date: '', cursor: 0 };
         if (!dp.accum) dp.accum = { days: {}, list: [], lv: {}, due: {}, last: '' };
-        const remote = data.accum;
+        const remote = remoteDaily.accum;
         let changed = false;
         if (remote.days) {
           Object.keys(remote.days).forEach(dayKey => {
@@ -15096,7 +15145,12 @@ _ttsCancel() {
   },
 
   renderReviewWords() {
-    try { this._pullWrongBank(); } catch (e) {}
+    if (!this._getSavedHost()) { this._renderReviewWordsInner(); return; }
+    const rlTimer = setTimeout(() => { this._showLoading('正从电脑读取，请稍候！'); }, 2000);
+    this._pullWrongBank().then(() => { clearTimeout(rlTimer); this._hideLoading(); this._renderReviewWordsInner(); }).catch(() => { clearTimeout(rlTimer); this._hideLoading(); this._renderReviewWordsInner(); });
+  },
+
+  _renderReviewWordsInner() {
     this.currentView = 'review';
     const main = document.getElementById('main-content');
     const wrongWords = Storage.getWrongWords();
@@ -16324,4 +16378,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260903-1729';
+window.__SERVER_VER = '20260903-1730';
