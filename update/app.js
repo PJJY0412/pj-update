@@ -462,20 +462,26 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       this.hearts = this.progress.hearts;
       this.currentSubject = 'english';
       this._prewarmAudio();
-      // 跨设备同步：先拉取电脑端（若电脑端有该学员数据则以电脑为权威替换；电脑端空则保留本地并 push 保底）
-      // 注意：绝不先清空本地（1730 曾因"先清空+空数据 replace 拉取"清空错题/积累墙，勿回退）
-      const loadTimer = setTimeout(() => { this._showLoading('正从电脑读取，请稍候！'); }, 2000);
-      Promise.all([
+      // 跨设备同步：电脑端为权威。登录顺序必须是【先推本地唯一错题/积累上电脑 → 再拉取权威替换】——
+      // 否则电脑端只存部分科目（如仅 math）时，_pullWrongBank(true) 的整库 replace 会删掉平板本地英/语文错题。
+      // 先 push 保证本地独有数据先进电脑（append-merge 成超集），再 pull replace，本地不丢亦不累计。
+      // 绝不先清空本地（1730 曾因"先清空+空数据 replace 拉取"清空错题/积累墙，勿回退）
+      const syncTimer = setTimeout(() => { this._showLoading('正从电脑读取，请稍候！'); }, 2000);
+      const dpLocal = Storage.getDailyProgress(id);
+      const hasLocalAccum = !!dpLocal && !!dpLocal.accum &&
+        (Object.keys(dpLocal.accum.days || {}).length > 0 || (dpLocal.accum.list || []).length > 0);
+      // 1) 先把本地唯一数据推上电脑，令电脑成为超集
+      const pushLocal = Promise.all([
+        Storage.getWrongWords().length ? (this._pushWrongBank() || Promise.resolve()) : Promise.resolve(),
+        hasLocalAccum ? (this._pushAccum() || Promise.resolve()) : Promise.resolve()
+      ]);
+      // 2) 推送完成后，再从电脑端拉取权威并以电脑为权威替换本地
+      pushLocal.then(() => Promise.all([
         this._pullWrongBank(true),
         this._pullAccum(true)
-      ]).then(() => {
-        clearTimeout(loadTimer); this._hideLoading();
-        // 电脑端空 → 把本地错题/积累推上电脑，让电脑成为权威（防跨设备清空，也保底数据）
-        if (Storage.getWrongWords().length) this._pushWrongBank();
-        const dpLocal = Storage.getDailyProgress(id);
-        if (dpLocal && dpLocal.accum && (Object.keys(dpLocal.accum.days || {}).length > 0 || (dpLocal.accum.list || []).length)) this._pushAccum();
-      })
-        .catch(() => { clearTimeout(loadTimer); this._hideLoading(); });
+      ]))
+        .catch(() => {})
+        .then(() => { clearTimeout(syncTimer); this._hideLoading(); });
       this.renderSubjectSelector();
       if (this._taskPollTimer) { clearInterval(this._taskPollTimer); this._taskPollTimer = null; }
       const poll = () => { try { this._pullRemoteHomework(); } catch (e) {} };
@@ -965,10 +971,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       btn.addEventListener('click', () => {
         const g = btn.dataset.garden;
         if (g === 'new') {
-          this._accFlow = true;
           this._accFlowFromGarden = true;
-          this._accTotalAll = words.length;
-          this._accStart(todayWords.slice(), true, null);
+          this._accNewFlow(todayWords.slice());
         } else if (g === 'morning') {
           const pool = this._gardenBuildPool(morningWords);
           this._accQuiz(morningWords.slice(), pool, 'morning');
@@ -3844,10 +3848,7 @@ main.innerHTML = html;
     });
     const startBtn = main.querySelector('[data-mode="start"]');
     if (startBtn) startBtn.addEventListener('click', () => {
-      this._accFlow = true;
-      this._accFlowFromGarden = false;
-      this._accTotalAll = words.length;
-      this._accStart(todayWords.slice(), true, null);
+      this._accNewFlow(todayWords.slice());
     });
     const backBtn = document.getElementById('acc-back-practice');
     if (backBtn) backBtn.addEventListener('click', () => this.renderDailyPractice());
@@ -4158,6 +4159,27 @@ main.innerHTML = html;
     this._accQuiz(this._accWords.slice());
   },
 
+  // 今日闯关（两关制，勿回退）：第 1 关·听音选词 → 第 2 关·听拼拼写，两关全过才算今日学完
+  _accNewFlow(words) {
+    this._accFlow = true;
+    this._accStars = 0;
+    this._accWords = words.slice();
+    this._accFlowWords = words.slice();
+    this._accTotalAll = words.length;
+    const pool = words.filter(x => String(x.en || x.zi).trim());
+    this._accQuiz(words.slice(), pool ? pool.slice() : null, 'accListen');
+  },
+
+  _accNewStageAdvance() {
+    // 第 1 关(听音选词)通过 → 进第 2 关(听拼拼写)；第 2 关通过 → 完成今日闯关
+    if (this._quizMode === 'accListen') {
+      const pool = (this._accFlowWords || this._accWords || []).filter(x => String(x.en || x.zi).trim());
+      this._accQuiz((this._accFlowWords || this._accWords || []).slice(), pool ? pool.slice() : null, 'accSpell');
+    } else if (this._quizMode === 'accSpell') {
+      this._accCouFinish();
+    }
+  },
+
   _accQuiz(words, pool, mode) {
     const arr = words.slice();
     for (let i = arr.length - 1; i > 0; i--) {
@@ -4166,8 +4188,10 @@ main.innerHTML = html;
     }
     if (arr.length < 2 && arr.length > 0) arr.push(arr[0]);
     const qMode = mode || 'acc';
-    // 日积月累第 2 关：多题型混合（听音选词 / 看义选词 / 听音拼写随机轮换），打破单调；其余玩法保持听音选词
+    // 日积月累两关制：第 1 关 accListen=听音选词，第 2 关 accSpell=听拼拼写；旧 acc=混合，其余=听音选词
     this._quizSub = arr.map((w, idx) => {
+      if (qMode === 'accListen') return 'hearChoose';
+      if (qMode === 'accSpell') return 'hearSpell';
       if (qMode !== 'acc') return 'hearChoose';
       const hasCn = !!(w.cn && String(w.cn).trim());
       const r = Math.random();
@@ -4209,7 +4233,8 @@ main.innerHTML = html;
 
     let html = '<div class="fc-container">';
     html += '<button class="back-btn" onclick="App._accExit()">← 返回上一级</button>';
-    html += '<div class="fc-counter">第 2 关 · ' + this._quizSubLabel(sub) + ' ' + (this._quizIndex + 1) + ' / ' + total + '</div>';
+    const stageLabel = (sub && this._quizMode === 'accSpell') ? '第 2 关 · ' : (sub && this._quizMode === 'accListen') ? '第 1 关 · ' : '';
+    html += '<div class="fc-counter">' + stageLabel + this._quizSubLabel(sub) + ' ' + (this._quizIndex + 1) + ' / ' + total + '</div>';
     html += '<div class="fc-progress" style="max-width:340px;height:6px;background:#E0E0E0;border-radius:3px;margin:-6px auto 12px;overflow:hidden">';
     html += '<div style="height:100%;width:' + Math.round(((this._quizIndex + 1) / total) * 100) + '%;background:#FF9800"></div></div>';
     html += '<div class="fc-card" style="cursor:default;pointer-events:none">';
@@ -4313,11 +4338,14 @@ main.innerHTML = html;
     const stars = wrong.length === 0 ? 3 : wrong.length <= 2 ? 2 : 1;
     this._accStars = Math.max(this._accStars || 0, stars);
 
-    const isAcc = this._quizMode === 'acc';
+    const isAcc = this._quizMode === 'acc' || this._quizMode === 'accListen' || this._quizMode === 'accSpell';
     const main = document.getElementById('main-content');
     let html = '<div class="subject-container">';
     html += '<button class="back-btn" onclick="App._accExit()">← 返回上一级</button>';
-    html += '<h2 class="course-title">' + (isAcc ? (wrong.length === 0 ? '🎯 第 2 关 · 全对！' : '🎯 第 2 关完成') : (wrong.length === 0 ? '🎯 全对！' : '🎯 完成')) + '</h2>';
+    let overTitle = wrong.length === 0 ? '🎯 全对！' : '🎯 完成';
+    if (this._quizMode === 'accListen') overTitle = wrong.length === 0 ? '🏁 第 1 关 · 听音全对！' : '🏁 第 1 关完成';
+    else if (this._quizMode === 'accSpell') overTitle = wrong.length === 0 ? '🎯 第 2 关 · 拼写全对！' : '🎯 第 2 关完成';
+    html += '<h2 class="course-title">' + overTitle + '</h2>';
     html += '<div style="padding:0 16px">';
     html += '<div style="background:#FFF8E1;border:1px solid #FFE082;border-radius:12px;padding:16px;margin-bottom:14px;text-align:center">';
     html += '<div style="font-size:34px">' + (stars >= 3 ? '🏆' : stars >= 2 ? '🌟' : '💪') + '</div>';
@@ -4338,7 +4366,7 @@ main.innerHTML = html;
       html += '</div>';
       html += '<button class="daily-mode-btn" id="quiz-retry" style="width:100%;margin-bottom:10px">🔁 重测 ' + wrong.length + ' 个错词</button>';
     }
-    html += '<button class="login-btn" id="quiz-done" style="width:100%">' + (this._quizMode === 'due' ? '✅ 完成今日复习' : this._quizMode === 'morning' ? '✅ 完成晨间快测' : this._quizMode === 'night' ? '✅ 完成闪电问答' : this._quizMode === 'week' ? '🏆 领取周考奖杯' : this._quizMode === 'tame' ? '🎉 驯服完毕' : '🏁 完成今日闯关') + '</button>';
+    html += '<button class="login-btn" id="quiz-done" style="width:100%">' + (this._quizMode === 'due' ? '✅ 完成今日复习' : this._quizMode === 'morning' ? '✅ 完成晨间快测' : this._quizMode === 'night' ? '✅ 完成闪电问答' : this._quizMode === 'week' ? '🏆 领取周考奖杯' : this._quizMode === 'tame' ? '🎉 驯服完毕' : this._quizMode === 'accListen' ? '🎯 进入第 2 关 · 听拼拼写' : this._quizMode === 'accSpell' ? '🏁 完成今日闯关' : '🏁 完成今日闯关') + '</button>';
     html += '</div></div>';
     main.innerHTML = html;
 
@@ -4348,8 +4376,11 @@ main.innerHTML = html;
     });
     const retry = document.getElementById('quiz-retry');
     if (retry) retry.addEventListener('click', () => this._accQuiz(wrong.slice(), this._quizPool || null, this._quizMode));
-    document.getElementById('quiz-done').addEventListener('click', () => {
-      if (this._quizMode === 'due') this._gardenDueDone();
+    const btnDone = document.getElementById('quiz-done');
+    btnDone.addEventListener('click', () => {
+      if (this._quizMode === 'accListen' || this._quizMode === 'accSpell') {
+        this._accNewStageAdvance();
+      } else if (this._quizMode === 'due') this._gardenDueDone();
       else if (this._quizMode === 'week') this._gardenWeekDone();
       else if (this._quizMode === 'tame') this._gardenTameDone();
       else if (this._quizMode === 'acc') this._accCouFinish();
@@ -14872,7 +14903,7 @@ _ttsCancel() {
       grade: this.currentStudent.grade || '',
       items: items
     });
-    this._lanPost('http://' + host + ':8899/wrongbank', body).catch(() => {});
+    return this._lanPost('http://' + host + ':8899/wrongbank', body).catch((e) => ({ ok: false, err: String(e) }));
   },
 
   _pullWrongBank(replace) {
@@ -14921,15 +14952,15 @@ _ttsCancel() {
 
   _pushAccum() {
     const host = this._getSavedHost();
-    if (!host || !this.currentStudent) return;
+    if (!host || !this.currentStudent) return Promise.resolve();
     const dp = Storage.getDailyProgress(this.currentStudent.id);
-    if (!dp) return;
+    if (!dp) return Promise.resolve();
     const body = JSON.stringify({
       name: this.currentStudent.name,
       grade: this.currentStudent.grade || '',
       daily: dp
     });
-    this._lanPost('http://' + host + ':8899/accum', body).catch(() => {});
+    return this._lanPost('http://' + host + ':8899/accum', body).catch((e) => ({ ok: false, err: String(e) }));
   },
 
   _pullAccum(replace) {
@@ -16392,4 +16423,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260903-1731';
+window.__SERVER_VER = '20260903-1732';
