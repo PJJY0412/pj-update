@@ -15,7 +15,7 @@ $deletedStudentsFile = Join-Path $PSScriptRoot '已删学员.json'
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260903-1'
+$script:SelfVer = '20260903-2'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -293,6 +293,51 @@ function Sync-StudentsToCloud {
     }
 }
 
+# ---------- 错题/日积月累/记忆花园 云端存档：把 wrongbank/accum 两目录全部学员文件推 GitHub update/ ----------
+function Sync-WrongAccumToCloud {
+    try {
+        # 开发机保护
+        if (Test-Path (Join-Path $PSScriptRoot 'no-cloud-sync.dev')) { return }
+        $tf = Join-Path $env:USERPROFILE '.pj_update_token'
+        if (-not (Test-Path $tf)) { return }
+        $token = (Get-Content $tf -Raw -Encoding UTF8).Trim()
+        if (-not $token) { return }
+        $repo = 'PJJY0412/pj-update'
+        $api = "https://api.github.com/repos/$repo/contents/update"
+        $h = @{ Authorization = "token $token"; 'User-Agent' = 'pj-receiver'; Accept = 'application/vnd.github+json' }
+
+        function Push-WaFile([string]$subDir, [string]$fileName) {
+            $localPath = Join-Path $updDir "$subDir\$fileName"
+            if (-not (Test-Path $localPath)) { return }
+            $contentB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($localPath))
+            $remotePath = "$subDir/$fileName"
+            $body = @{ message = "sync $remotePath"; content = $contentB64; branch = 'master' }
+            try {
+                $existing = Invoke-RestMethod -Uri "$api/$remotePath" -Headers $h -Method Get -TimeoutSec 30
+                if ($existing.sha) { $body.sha = [string]$existing.sha }
+            } catch {}
+            $null = Invoke-RestMethod -Uri "$api/$remotePath" -Headers $h -Method Put -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 60
+        }
+
+        $pushed = 0
+        foreach ($subDir in @('wrongbank', 'accum')) {
+            $dir = Join-Path $updDir $subDir
+            if (-not (Test-Path $dir)) { continue }
+            Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object {
+                try {
+                    Push-WaFile $subDir $_.Name
+                    $pushed++
+                } catch {
+                    Log ("云端错题/积累同步失败 {0}/{1}: {2}" -f $subDir, $_.Name, $_.Exception.Message)
+                }
+            }
+        }
+        if ($pushed -gt 0) { Log ("云端错题/积累存档：已推送 {0} 个学员文件" -f $pushed) }
+    } catch {
+        Log ("云端错题/积累同步异常: {0}" -f $_.Exception.Message)
+    }
+}
+
 # ---------- 学员删除墓碑：持久化"已删学员"名单，防止离线平板上线后全量推送把已删学员再次复活 ----------
 # 返回已删学员墓碑名单 [{name, grade, at}]
 function Get-DeletedStudents {
@@ -401,9 +446,21 @@ function Remove-StudentData([string]$name, [string]$grade) {
             }
         } catch { }
     }
+    # 7) 错题本 + 日积月累 JSON（电脑端跨设备同步数据源）
+    foreach ($sub in @('wrongbank', 'accum')) {
+        $subDir = Join-Path $updDir $sub
+        if (Test-Path $subDir) {
+            $target = Join-Path $subDir "$safe.json"
+            if (Test-Path -LiteralPath $target) {
+                try { Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+    }
     Log ("学员删除：平板已删除学员『{0}』，电脑端资料已清理" -f $nm)
     # 电脑本地学员库已清理 → 推送最新名单到云端，阻断"云端一同步又复活"
     Sync-StudentsToCloud
+    # 错题本+日积月累已删本地文件 → 推送到云端，防止其他平板从云端拉回已删学员数据
+    try { Sync-WrongAccumToCloud } catch {}
     # 记录永久墓碑：即使以后其他平板（离线中途上线）全量推送名单，也不能重建该学员档案
     Add-DeletedStudent $nm $grade
 }
@@ -1459,6 +1516,7 @@ function Handle-Http {
             Log ("收到手动云端同步请求（来自 {0}）" -f $clientIp)
             try { Sync-CloudUpdateDir } catch { Log ("云端同步异常: {0}" -f $_.Exception.Message) }
             try { Clear-StaleServedJs } catch { Log ("清除陈旧JS异常: {0}" -f $_.Exception.Message) }
+            try { Sync-WrongAccumToCloud } catch { Log ("错题/积累云端存档异常: {0}" -f $_.Exception.Message) }
             $swS.Stop()
             $respS = @{ ok = $true; ms = [int]$swS.ElapsedMilliseconds } | ConvertTo-Json -Compress
             Send-Response $stream '200 OK' 'application/json' $respS
@@ -2518,6 +2576,11 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
                     }
                     if (-not $found) { $merged += $item }
                 }
+                # 支持 removed 数组 (跨设备删除 tombstone)
+                $removed = @($json.removed)
+                if ($removed.Count -gt 0) {
+                    $merged = @($merged | Where-Object { $removed -notcontains ([string]$_.wordEn) })
+                }
                 try {
                     $out = @{ name = $student; grade = $grade; items = $merged } | ConvertTo-Json -Depth 6 -Compress
                     [System.IO.File]::WriteAllText($bankFile, $out, (New-Object System.Text.UTF8Encoding $true))
@@ -2552,7 +2615,9 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
             } else {
                 $student = [string]$json.name
                 $grade = if ($null -ne $json.grade) { [string]$json.grade } else { '' }
-                $incoming = $json.accum
+                # 新格式: {name, grade, daily:{...}}; 旧格式: {name, grade, accum:{...}} (仅 accum 子对象)
+                $incDaily = $json.daily
+                $incAccum = if ($null -ne $incDaily) { $incDaily.accum } else { $json.accum }
                 $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
                 $accumDir = Join-Path $updDir 'accum'
                 try { New-Item -ItemType Directory -Path $accumDir -Force | Out-Null } catch {}
@@ -2563,51 +2628,112 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
                         $existing = [System.IO.File]::ReadAllText($accumFile) | ConvertFrom-Json
                     }
                 } catch {}
-                if ($null -eq $existing) { $existing = @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } }
-                if ($null -ne $incoming) {
-                    if ($null -ne $incoming.days) {
-                        foreach ($prop in $incoming.days.PSObject.Properties) {
+                # 初始化: 兼容旧文件(只有accum字段)和新文件(有daily字段)
+                if ($null -eq $existing) { $existing = @{ daily = @{ accum = @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } } } }
+                if ($null -eq $existing.daily) {
+                    # 旧格式文件，迁移: existing 本身就是 accum 对象
+                    $oldAccum = $existing
+                    $existing = @{ daily = @{ accum = @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } } }
+                    # 把旧 accum 数据迁移进来
+                    if ($null -ne $oldAccum.days) { $existing.daily.accum.days = $oldAccum.days }
+                    if ($null -ne $oldAccum.list) { $existing.daily.accum.list = @($oldAccum.list) }
+                    if ($null -ne $oldAccum.lv) { $existing.daily.accum.lv = $oldAccum.lv }
+                    if ($null -ne $oldAccum.due) { $existing.daily.accum.due = $oldAccum.due }
+                    if ($null -ne $oldAccum.last) { $existing.daily.accum.last = $oldAccum.last }
+                }
+                $eDaily = $existing.daily
+                if ($null -eq $eDaily.accum) { $eDaily | Add-Member -NotePropertyName 'accum' -NotePropertyValue @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } -Force }
+                $eAcc = $eDaily.accum
+                # --- accum 子对象合并 (append-only, 与旧逻辑一致) ---
+                if ($null -ne $incAccum) {
+                    if ($null -ne $incAccum.days) {
+                        foreach ($prop in $incAccum.days.PSObject.Properties) {
                             $dayKey = $prop.Name
                             $dayIds = @($prop.Value)
-                            if ($null -eq $existing.days) { $existing.days = @{} }
-                            if ($null -eq $existing.days.$dayKey) { $existing.days.$dayKey = @() }
+                            if ($null -eq $eAcc.days) { $eAcc.days = @{} }
+                            if ($null -eq $eAcc.days.$dayKey) { $eAcc.days.$dayKey = @() }
                             foreach ($id in $dayIds) {
-                                if ($existing.days.$dayKey -notcontains $id) { $existing.days.$dayKey += $id }
+                                if ($eAcc.days.$dayKey -notcontains $id) { $eAcc.days.$dayKey += $id }
                             }
                         }
                     }
-                    if ($null -ne $incoming.list) {
-                        if ($null -eq $existing.list) { $existing.list = @() }
-                        foreach ($id in @($incoming.list)) {
-                            if ($existing.list -notcontains $id) { $existing.list += $id }
+                    if ($null -ne $incAccum.list) {
+                        if ($null -eq $eAcc.list) { $eAcc.list = @() }
+                        foreach ($id in @($incAccum.list)) {
+                            if ($eAcc.list -notcontains $id) { $eAcc.list += $id }
                         }
                     }
-                    if ($null -ne $incoming.lv) {
-                        if ($null -eq $existing.lv) { $existing.lv = @{} }
-                        foreach ($prop in $incoming.lv.PSObject.Properties) {
+                    if ($null -ne $incAccum.lv) {
+                        if ($null -eq $eAcc.lv) { $eAcc.lv = @{} }
+                        foreach ($prop in $incAccum.lv.PSObject.Properties) {
                             $existingLv = 0
-                            try { $existingLv = [int]$existing.lv.$($prop.Name) } catch {}
+                            try { $existingLv = [int]$eAcc.lv.$($prop.Name) } catch {}
                             $newLv = 0
                             try { $newLv = [int]$prop.Value } catch {}
-                            if ($newLv -gt $existingLv) { $existing.lv.$($prop.Name) = $newLv }
+                            if ($newLv -gt $existingLv) { $eAcc.lv.$($prop.Name) = $newLv }
                         }
                     }
-                    if ($null -ne $incoming.due) {
-                        if ($null -eq $existing.due) { $existing.due = @{} }
-                        foreach ($prop in $incoming.due.PSObject.Properties) {
-                            if ([string]::IsNullOrEmpty([string]$existing.due.$($prop.Name))) {
-                                $existing.due.$($prop.Name) = $prop.Value
-                            } elseif ([string]$prop.Value -lt [string]$existing.due.$($prop.Name)) {
-                                $existing.due.$($prop.Name) = $prop.Value
+                    if ($null -ne $incAccum.due) {
+                        if ($null -eq $eAcc.due) { $eAcc.due = @{} }
+                        foreach ($prop in $incAccum.due.PSObject.Properties) {
+                            if ([string]::IsNullOrEmpty([string]$eAcc.due.$($prop.Name))) {
+                                $eAcc.due.$($prop.Name) = $prop.Value
+                            } elseif ([string]$prop.Value -lt [string]$eAcc.due.$($prop.Name)) {
+                                $eAcc.due.$($prop.Name) = $prop.Value
                             }
                         }
                     }
-                    if ([string]$incoming.last -gt [string]$existing.last) { $existing.last = $incoming.last }
+                    if ([string]$incAccum.last -gt [string]$eAcc.last) { $eAcc.last = $incAccum.last }
+                }
+                # --- 记忆花园字段合并 (仅新格式 daily 才带) ---
+                if ($null -ne $incDaily) {
+                    # lv (花园级别): max
+                    if ($null -ne $incDaily.lv) {
+                        if ($null -eq $eDaily.lv) { $eDaily.lv = @{} }
+                        foreach ($prop in $incDaily.lv.PSObject.Properties) {
+                            $ev = 0; try { $ev = [int]$eDaily.lv.$($prop.Name) } catch {}
+                            $nv = 0; try { $nv = [int]$prop.Value } catch {}
+                            if ($nv -gt $ev) { $eDaily.lv.$($prop.Name) = $nv }
+                        }
+                    }
+                    # trophies: per-key stars max
+                    if ($null -ne $incDaily.trophies) {
+                        if ($null -eq $eDaily.trophies) { $eDaily.trophies = @{} }
+                        foreach ($prop in $incDaily.trophies.PSObject.Properties) {
+                            $existingStars = 0; try { $existingStars = [int]$prop.Value.s } catch {}
+                            $eTrophy = $eDaily.trophies.$($prop.Name)
+                            $eStars = 0; if ($null -ne $eTrophy) { try { $eStars = [int]$eTrophy.s } catch {} }
+                            if ($existingStars -gt $eStars) { $eDaily.trophies.$($prop.Name) = $prop.Value }
+                        }
+                    }
+                    # log (每日活动记录): per-date union
+                    if ($null -ne $incDaily.log) {
+                        if ($null -eq $eDaily.log) { $eDaily.log = @{} }
+                        foreach ($prop in $incDaily.log.PSObject.Properties) {
+                            $dateKey = $prop.Name
+                            $ids = @($prop.Value)
+                            if ($null -eq $eDaily.log.$dateKey) { $eDaily.log.$dateKey = @() }
+                            foreach ($id in $ids) {
+                                if ($eDaily.log.$dateKey -notcontains $id) { $eDaily.log.$dateKey += $id }
+                            }
+                        }
+                    }
+                    # date / cursor / stars: 取较新/较大值
+                    if (-not [string]::IsNullOrEmpty([string]$incDaily.date)) {
+                        if ([string]$incDaily.date -gt [string]$eDaily.date) { $eDaily.date = $incDaily.date }
+                    }
+                    $incCursor = 0; try { $incCursor = [int]$incDaily.cursor } catch {}
+                    $eCursor = 0; try { $eCursor = [int]$eDaily.cursor } catch {}
+                    if ($incCursor -gt $eCursor) { $eDaily.cursor = $incCursor }
+                    $incStars = 0; try { $incStars = [int]$incDaily.stars } catch {}
+                    $eStars = 0; try { $eStars = [int]$eDaily.stars } catch {}
+                    if ($incStars -gt $eStars) { $eDaily.stars = $incStars }
                 }
                 try {
-                    $out = @{ name = $student; grade = $grade; accum = $existing } | ConvertTo-Json -Depth 6 -Compress
+                    $existing.daily = $eDaily
+                    $out = @{ name = $student; grade = $grade; daily = $eDaily } | ConvertTo-Json -Depth 6 -Compress
                     [System.IO.File]::WriteAllText($accumFile, $out, (New-Object System.Text.UTF8Encoding $true))
-                } catch { Log ("д accum ʧ��: {0}" -f $_.Exception.Message) }
+                } catch { Log ("写 accum 失败: {0}" -f $_.Exception.Message) }
                 Send-Response $stream '200 OK' 'application/json' (@{ ok = $true } | ConvertTo-Json -Compress)
             }
         }
@@ -2619,13 +2745,23 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
             } else {
                 $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
                 $accumFile = Join-Path $updDir "accum\$safeName.json"
-                $result = @{ student = $student; accum = @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } }
+                $emptyDaily = @{ accum = @{ days = @{}; list = @(); lv = @{}; due = @{}; last = '' } }
+                $result = @{ student = $student; daily = $emptyDaily }
                 try {
                     if (Test-Path $accumFile) {
                         $parsed = [System.IO.File]::ReadAllText($accumFile) | ConvertFrom-Json
-                        if ($null -ne $parsed -and $null -ne $parsed.accum) { $result.accum = $parsed.accum }
+                        if ($null -ne $parsed) {
+                            if ($null -ne $parsed.daily) {
+                                $result.daily = $parsed.daily
+                            } elseif ($null -ne $parsed.accum) {
+                                # 旧格式文件: 只有accum字段，包裹成daily结构返回
+                                $result.daily = @{ accum = $parsed.accum }
+                            }
+                        }
                     }
                 } catch {}
+                # 兼容旧平板: 顶层也带accum指向daily.accum
+                $result | Add-Member -NotePropertyName 'accum' -NotePropertyValue $result.daily.accum -Force
                 Send-Response $stream '200 OK' 'application/json' ($result | ConvertTo-Json -Depth 6 -Compress)
             }
         }
@@ -2796,6 +2932,7 @@ $timer.add_Tick({
         try { Sync-CloudUpdateDir } catch { Log ("云端同步异常: {0}" -f $_.Exception.Message) }
         try { Clear-StaleServedJs } catch { Log ("清除陈旧JS异常: {0}" -f $_.Exception.Message) }
         try { Sync-SelfUpdate } catch { Log ("自举更新异常: {0}" -f $_.Exception.Message) }
+        try { Sync-WrongAccumToCloud } catch { Log ("错题/积累云端存档异常: {0}" -f $_.Exception.Message) }
         $script:nextCloudSync = (Get-Date).AddMinutes(10)
     }
     if ((Get-Date) -ge $script:nextGraded) {
