@@ -462,15 +462,19 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       this.hearts = this.progress.hearts;
       this.currentSubject = 'english';
       this._prewarmAudio();
-      // Clear local wrongWords + daily, then pull fresh from computer (authoritative)
-      Storage.save('wrongWords', []);
-      const emptyDaily = { date: '', cursor: 0, stars: 0, log: {}, trophies: {}, accum: { days: {}, list: [], lv: {}, due: {}, last: '' } };
-      Storage.saveDailyProgress(id, emptyDaily);
+      // 跨设备同步：先拉取电脑端（若电脑端有该学员数据则以电脑为权威替换；电脑端空则保留本地并 push 保底）
+      // 注意：绝不先清空本地（1730 曾因"先清空+空数据 replace 拉取"清空错题/积累墙，勿回退）
       const loadTimer = setTimeout(() => { this._showLoading('正从电脑读取，请稍候！'); }, 2000);
       Promise.all([
         this._pullWrongBank(true),
         this._pullAccum(true)
-      ]).then(() => { clearTimeout(loadTimer); this._hideLoading(); })
+      ]).then(() => {
+        clearTimeout(loadTimer); this._hideLoading();
+        // 电脑端空 → 把本地错题/积累推上电脑，让电脑成为权威（防跨设备清空，也保底数据）
+        if (Storage.getWrongWords().length) this._pushWrongBank();
+        const dpLocal = Storage.getDailyProgress(id);
+        if (dpLocal && dpLocal.accum && (Object.keys(dpLocal.accum.days || {}).length > 0 || (dpLocal.accum.list || []).length)) this._pushAccum();
+      })
         .catch(() => { clearTimeout(loadTimer); this._hideLoading(); });
       this.renderSubjectSelector();
       if (this._taskPollTimer) { clearInterval(this._taskPollTimer); this._taskPollTimer = null; }
@@ -14881,6 +14885,8 @@ _ttsCancel() {
         try { data = JSON.parse(r.body); } catch (e) {}
         if (!data || !data.items) return;
         if (replace) {
+          // 空数据守护：电脑端无该学员错题时绝不覆盖本地（避免 1730 登录即清空事故）
+          if (!(data.items || []).length) return;
           const items = (data.items || []).map(item => ({
             wordEn: item.wordEn, wordCn: item.wordCn || '',
             unitTitle: item.unitTitle || '', subject: item.subject || 'english',
@@ -14937,7 +14943,15 @@ _ttsCancel() {
         if (!data) return;
         if (replace) {
           const dailyBlob = data.daily || data;
-          if (dailyBlob) Storage.saveDailyProgress(this.currentStudent.id, dailyBlob);
+          // 空数据守护：电脑端无该学员积累数据时绝不覆盖本地（避免 1730 登录即清空事故）
+          const acc = (dailyBlob && dailyBlob.accum) || null;
+          const hasContent = !!acc &&
+            (Object.keys(acc.days || {}).length > 0 ||
+             (acc.list && acc.list.length > 0) ||
+             (dailyBlob.cursor > 0) ||
+             Object.keys(dailyBlob.log || {}).length > 0 ||
+             Object.keys(dailyBlob.trophies || {}).length > 0);
+          if (dailyBlob && hasContent) Storage.saveDailyProgress(this.currentStudent.id, dailyBlob);
           return;
         }
         const remoteDaily = data.daily || data;
@@ -16378,4 +16392,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260903-1730';
+window.__SERVER_VER = '20260903-1731';
