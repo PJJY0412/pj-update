@@ -859,7 +859,9 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
 
     const dp = this._gardenLoad();
     const today = this._gardenDateStr(0);
-    const doneToday = dp.date === today && dp.cursor > 0;
+    // 兼容两种日期格式：日积月累 _accFinishDaily 写 toDateString()（Fri Sep 04 2026），
+    // 但记忆花园以 _gardenDateStr(0)（YYYY-MM-DD）比较，故两种都认，避免当日闯关后 doneToday 永假
+    const doneToday = (dp.date === today || dp.date === new Date().toDateString()) && dp.cursor > 0;
     const dueWords = this._gardenDueWords();
     const morningWords = this._gardenFindWords((dp.log && dp.log[this._gardenDateStr(-1)]) || []);
     const nightWords = this._gardenFindWords((dp.log && dp.log[today]) || []);
@@ -869,9 +871,8 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       const prog = Storage.getProgress();
       streakDays = (prog && prog.streak) || 0;
     } catch (e) {}
-    const start = doneToday ? Math.min(dp.cursor, words.length) : dp.cursor;
-    const batchEnd = dp.cursor >= words.length ? words.length : Math.min(start + DAILY_BATCH, words.length);
-    const todayWords = words.slice(start, batchEnd);
+    // 与每天必练一致：今日新词一次全收老师布置的全部词（不受 DAILY_BATCH=5 批次限制）
+    const todayWords = doneToday ? [] : words.slice();
     const newReady = !doneToday && todayWords.length > 0;
     const weekWords = this._gardenWeekWords();
     const monsters = this._gardenMonsters();
@@ -4392,6 +4393,7 @@ main.innerHTML = html;
     this._accFlow = false;
     const totalAll = this._accTotalAll || (this._accWords ? this._accWords.length : 0);
     this._accAccumulate(this._accWords);
+    this._gardenMarkLearned(this._accWords || []);
     this._accFinishDaily(totalAll, this._accStars || 1);
   },
 
@@ -16423,4 +16425,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260903-1732';
+window.__SERVER_VER = '20260904-1733';
