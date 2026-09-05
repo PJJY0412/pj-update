@@ -15,7 +15,7 @@ $deletedStudentsFile = Join-Path $PSScriptRoot '已删学员.json'
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260903-2'
+$script:SelfVer = '20260904-1'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -124,6 +124,35 @@ function Get-SubjectCode($name) {
 function Get-GradeFolderName($grade) {
     if ([string]::IsNullOrEmpty($grade)) { return '未分年级' }
     return "$grade" + '年级'
+}
+
+# 本地点标识：读 工具\本机地点.txt（首行非 # 内容），无文件则用电脑名兜底。
+# 平板不需要手动输入地点：连接哪台电脑就归属哪个地点（平板自由流动，各地点名单互不混淆）。
+$script:siteId = ''
+function Get-LocalSite {
+    if ($script:siteId) { return $script:siteId }
+    $site = ''
+    $f = Join-Path $PSScriptRoot '本机地点.txt'
+    if (Test-Path -LiteralPath $f) {
+        try {
+            foreach ($ln in [System.IO.File]::ReadAllLines($f)) {
+                $t = [string]$ln
+                $t = $t.Trim()
+                if ($t.Length -eq 0 -or $t.StartsWith('#')) { continue }
+                $site = $t
+                break
+            }
+        } catch {}
+    }
+    if (-not $site) { $site = $env:COMPUTERNAME }
+    $script:siteId = $site
+    return $site
+}
+function LogSiteIfNeeded {
+    if (-not $script:siteLogged) {
+        $script:siteLogged = $true
+        Log ("本机地点：{0}" -f (Get-LocalSite))
+    }
 }
 function Hide-File($path) {
     if (Test-Path -LiteralPath $path) {
@@ -240,9 +269,12 @@ function Save-ItemsToFolder($zone, $grade, $student, $items) {
     Log ("{0}：学员『{1}』（{2}）新增 {3} 题，累计 {4} 题 → {5}\{6}\{7}\{8}" -f $action, $student, $gradeName, $added, @($all).Count, (Split-Path $baseDir -Leaf), $zone, $gradeName, $safe)
 }
 
-# 推送学员名单到云端（GitHub update/students.json）：用电脑端学员库文件夹的最新名单覆盖云端，阻断"删除后复活"
+# 推送本地点学员名单到云端（GitHub update/students.json）：按"地点(site)"合并，不是整份覆盖。
+# 每台地点电脑都把自己的学员库名单合并进云端（保留其他地点的记录），删除的学员因不在本名单中
+# 也随之从云端消失 → 阻断"删除后复活"；新注册学员随周期推送自动上云 → 各地点平板按 site 过滤即隔离。
 function Sync-StudentsToCloud {
     try {
+        $siteName = Get-LocalSite
         # 生成最新名单（与 /students.json 同源：枚举学员库文件夹）
         $stDir = Join-Path $baseDir '学员库'
         $list = @()
@@ -260,11 +292,19 @@ function Sync-StudentsToCloud {
                             if ($j.createdAt) { $createdAt = [string]$j.createdAt }
                         } catch {}
                     }
-                    $list += [PSCustomObject]@{ name = $name; grade = $gd; createdAt = $createdAt }
+                    $list += [PSCustomObject]@{ name = $name; grade = $gd; createdAt = $createdAt; site = $siteName }
                 }
             }
         }
-        $stuJson = $list | ConvertTo-Json -Compress -Depth 4
+
+        # 空名单保护：本地点学员库为空（如更换电脑、学员库目录尚未复制/重建）时跳过合并，
+        # 保留云端该地点现有记录，防止首轮同步用空名单把本地点云端名单清空（勿回退）。
+        # 真实删除是逐人显式触发（POST /students 的 removed → Remove-StudentData → 本函数），
+        # 删除后学员库仍含其他学员；仅当整地点删空/整目录丢失才会触发本保护。
+        if ($list.Count -eq 0) {
+            Log ("云端学员同步：[{0}] 本地点学员库为空，跳过合并（保留云端该地点现有名单）" -f $siteName)
+            return
+        }
 
         # 读取 GitHub 令牌
         $tf = Join-Path $env:USERPROFILE '.pj_update_token'
@@ -274,20 +314,45 @@ function Sync-StudentsToCloud {
 
         $repo = 'PJJY0412/pj-update'
         $api = "https://api.github.com/repos/$repo/contents/update/students.json"
-        $contentB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($stuJson))
         $h = @{ Authorization = "token $token"; 'User-Agent' = 'pj-receiver'; Accept = 'application/vnd.github+json' }
 
-        # 取现有文件的 sha（更新时必需）
-        $sha = ''
-        try {
-            $existing = Invoke-RestMethod -Uri $api -Headers $h -Method Get -TimeoutSec 30
-            if ($existing.sha) { $sha = [string]$existing.sha }
-        } catch {}
+        # 读云端现有名单 → 剔除本地点记录 → 合并本地点最新名单 → 写回（保留其他地点记录，勿整体覆盖）
+        $finalJson = $null
+        for ($attempt = 0; $attempt -lt 3 -and $null -eq $finalJson; $attempt++) {
+            $sha = ''
+            $keepList = @()
+            try {
+                $existing = Invoke-RestMethod -Uri $api -Headers $h -Method Get -TimeoutSec 30
+                if ($existing.sha) { $sha = [string]$existing.sha }
+                if ($existing.content) {
+                    try {
+                        $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$existing.content))
+                        $cloudList = @($decoded | ConvertFrom-Json)
+                        foreach ($c in $cloudList) {
+                            if ($null -eq $c) { continue }
+                            $cs = ''
+                            try { $cs = [string]$c.site } catch {}
+                            if ($cs -ne $siteName) { $keepList += $c }
+                        }
+                    } catch {}
+                }
+            } catch {}
 
-        $body = @{ message = 'sync students after delete'; content = $contentB64; branch = 'master' }
-        if ($sha) { $body.sha = $sha }
-        $null = Invoke-RestMethod -Uri $api -Headers $h -Method Put -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 60
-        Log ("云端学员同步：已推送最新学员名单（{0} 人）" -f $list.Count)
+            $merged = @($keepList) + @($list)
+            $mergedSorted = @($merged | Sort-Object @{ Expression = { [string]$_.name }; Ascending = $true })
+            $finalJson = $mergedSorted | ConvertTo-Json -Compress -Depth 4
+            $contentB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($finalJson))
+            $body = @{ message = "sync students ($siteName)"; content = $contentB64; branch = 'master' }
+            if ($sha) { $body.sha = $sha }
+            try {
+                $null = Invoke-RestMethod -Uri $api -Headers $h -Method Put -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 60
+            } catch {
+                # 并发冲突（sha 过期）→ 重读重试；3 次内仍失败则放弃本轮
+                $finalJson = $null
+                if ($attempt -lt 2) { Start-Sleep -Milliseconds 600 }
+            }
+        }
+        Log ("云端学员同步：[{0}] 已合并推送（本地点 {1} 人）" -f $siteName, $list.Count)
     } catch {
         Log ("云端学员同步失败：{0}" -f $_.Exception.Message)
     }
@@ -1594,6 +1659,7 @@ function Handle-Http {
         elseif ($method -eq 'GET' -and $pathOnly -eq '/students.json') {
             # 实时从学员库文件夹动态生成（与 /students 同源），确保平板拉到的永远是电脑端真实已注册学员
             # （不再返回可能陈旧的静态 students.json，旧文件仅供云端同步方向使用）
+            $siteName = Get-LocalSite
             $list = @()
             $stDir = Join-Path $baseDir '学员库'
             if (Test-Path $stDir) {
@@ -1615,12 +1681,16 @@ function Handle-Http {
                             } catch {}
                         }
                         if (-not $dead.ContainsKey($name)) {
-                            $list += [PSCustomObject]@{ name = $name; grade = $gd; createdAt = $createdAt }
+                            $list += [PSCustomObject]@{ name = $name; grade = $gd; createdAt = $createdAt; site = $siteName }
                         }
                     }
                 }
             }
             Send-Response $stream '200 OK' 'application/json; charset=utf-8' ($list | ConvertTo-Json -Compress -Depth 4)
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/site') {
+            # 下发本机地点标识：平板自由流动时，连到哪台电脑就归属哪个地点，平板据此只读本地点注册学员
+            Send-Response $stream '200 OK' 'application/json; charset=utf-8' (@{ site = Get-LocalSite } | ConvertTo-Json -Compress)
         }
         elseif ($method -eq 'GET' -and $pathOnly -eq '/students/deleted') {
             # 下发删除墓碑名单：离线平板上线后拉取此列表，把电脑端已删除的学员从本地一并删除（防复活）
@@ -1871,6 +1941,7 @@ function Handle-Http {
         }
         elseif ($method -eq 'GET' -and $pathOnly -eq '/students') {
             $stDir = Join-Path $baseDir '学员库'
+            $siteName = Get-LocalSite
             $list = @()
             if (Test-Path $stDir) {
                 $dead = @{}
@@ -1891,7 +1962,7 @@ function Handle-Http {
                             } catch {}
                         }
                         if (-not $dead.ContainsKey($name)) {
-                            $list += [PSCustomObject]@{ name = $name; grade = $gd; createdAt = $createdAt }
+                            $list += [PSCustomObject]@{ name = $name; grade = $gd; createdAt = $createdAt; site = $siteName }
                         }
                     }
                 }
@@ -1943,7 +2014,7 @@ function Handle-Http {
                     $dir = Join-Path (Join-Path $stDir (Get-GradeFolderName $gd)) $safe
                     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
                     $pf = Join-Path $dir 'profile.json'
-                    $payload = @{ name = $nm; grade = $gd; createdAt = [string]$s.createdAt; updatedAt = (Get-Date).ToString('o') } | ConvertTo-Json -Depth 4
+                    $payload = @{ name = $nm; grade = $gd; createdAt = [string]$s.createdAt; site = Get-LocalSite; updatedAt = (Get-Date).ToString('o') } | ConvertTo-Json -Depth 4
                     [System.IO.File]::WriteAllText($pf, $payload, (New-Object System.Text.UTF8Encoding $false))
                     $added++
                     if ($gd -match '^\d+$') {
@@ -2933,6 +3004,8 @@ $timer.add_Tick({
         try { Clear-StaleServedJs } catch { Log ("清除陈旧JS异常: {0}" -f $_.Exception.Message) }
         try { Sync-SelfUpdate } catch { Log ("自举更新异常: {0}" -f $_.Exception.Message) }
         try { Sync-WrongAccumToCloud } catch { Log ("错题/积累云端存档异常: {0}" -f $_.Exception.Message) }
+        # 周期推送本地点学员名单上云（新注册自动上云 + 按地点合并隔离各点学员，勿回退为整体覆盖）
+        try { Sync-StudentsToCloud } catch { Log ("学员名单云端同步异常: {0}" -f $_.Exception.Message) }
         $script:nextCloudSync = (Get-Date).AddMinutes(10)
     }
     if ((Get-Date) -ge $script:nextGraded) {
