@@ -490,6 +490,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
       if (!this._visHandler) {
         this._visHandler = () => {
           if (document.visibilityState === 'visible' && this.currentStudent) {
+            try { this._syncStudentsFromCloud(); } catch (e) {}
             try { this._pullRemoteHomework(); } catch (e) {}
             try { this._pullWrongBank(); } catch (e) {}
             try { this._pullAccum(); } catch (e) {}
@@ -5054,7 +5055,7 @@ main.innerHTML = html;
       { icon: '📘', subj: 'chinese', label: '语文' },
       { icon: '📙', subj: 'math', label: '数学' }
     ];
-    (Storage.getStudents() || []).forEach(s => {
+    (Storage.getSiteStudents() || []).forEach(s => {
       const g = Storage.getCurrentGrade(s);
       if (!gradeFilter(g)) return;
       list.push({
@@ -5349,7 +5350,7 @@ main.innerHTML = html;
       const t = String(w.text || '').trim();
       if (t && String(w.subject) === st.subject) pickItems.push({ src: 'week', text: t, name: w.studentName || '学员' });
     });
-    Storage.getStudents().forEach(s => {
+    Storage.getSiteStudents().forEach(s => {
       if (!this._gradeAllowed(Storage.getCurrentGrade(s))) return;
       Storage.getWrongQuestions(s.id).forEach(q => {
         const t = String(q.text || '').trim();
@@ -5769,10 +5770,16 @@ if (this._apkNoticeShown) return;
       if (!host) return Promise.resolve(false);
       return Promise.all([
         this._fetchJsonTimeout('http://' + host + ':8899/students.json', 5000).catch(() => null),
-        this._fetchJsonTimeout('http://' + host + ':8899/students/deleted', 5000).catch(() => null)
+        this._fetchJsonTimeout('http://' + host + ':8899/students/deleted', 5000).catch(() => null),
+        this._fetchJsonTimeout('http://' + host + ':8899/site', 5000).catch(() => null)
       ]).then(rs => {
         const txt = rs[0];
         const deadTxt = rs[1];
+        // 学习本地点：连接哪台电脑就归属哪个地点（平板自由流动，无需手动设置；无 /site 端点的旧电脑则保持空 = 兼容旧单机名单）
+        try {
+          const sJson = JSON.parse(rs[2] || 'null');
+          if (sJson && sJson.site) Storage.setMySite(String(sJson.site));
+        } catch (e) {}
         // 先应用电脑端"已删学员"墓碑：把本机残留的已删学员一并删除，再合并名单才不会被"复活"（勿回退）
         if (deadTxt) {
           try {
@@ -5807,6 +5814,24 @@ if (this._apkNoticeShown) return;
         .catch(() => false);
     };
     const refreshIfNeeded = () => {
+      // 站点隔离：同步拿到本点名单后，若当前登录学员不属于本地点，提示并退回登录页（勿回退）
+      try {
+        const sid = Storage.getStudent();
+        if (sid != null && self.currentStudent) {
+          const inSite = Storage.getSiteStudents().some(s => String(s.id) === String(sid));
+          if (!inSite) {
+            const oldName = self.currentStudent.name || '';
+            Storage.logout();
+            self.currentStudent = null;
+            self.isAdminMode = false;
+            self._cleanupView();
+            try { alert('当前学员「' + oldName + '」不属于本地点，已自动退出登录，请在本地点重新选择学员！'); } catch (e) {}
+            self.currentView = 'login';
+            self.renderLogin();
+            return;
+          }
+        }
+      } catch (e) {}
       try {
         if (self.currentView === 'login') self.renderLogin();
       } catch (e) {}
@@ -6009,7 +6034,7 @@ _updLog(msg) {
 
 _renderAdminScan() {
     const container = document.getElementById('admin-tab-content');
-    const students = Storage.getStudents().filter(s => this._gradeAllowed(Storage.getCurrentGrade(s)));
+    const students = Storage.getSiteStudents().filter(s => this._gradeAllowed(Storage.getCurrentGrade(s)));
     let html = '<div class="admin-section">';
 
     html += '<p style="margin:0 0 10px;font-size:13px;color:var(--text-light)">点击学员，扫描其纸质作业并整理错题</p>';
@@ -6159,7 +6184,7 @@ const name = s2 ? s2.name : '';
     if (!panel) return;
     if (panel.dataset.open) { panel.innerHTML = ''; panel.dataset.open = ''; this._refreshTaskSel(); return; }
     panel.dataset.open = '1';
-    const students = Storage.getStudents();
+    const students = Storage.getSiteStudents();
     let html = '<div style="border:1px solid #BBDEFB;background:#E3F2FD;border-radius:10px;padding:10px 12px;margin-bottom:8px">';
     html += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">☑ 勾选错题（本机负责年级）</div>';
     let any = false;
@@ -6218,7 +6243,7 @@ const name = s2 ? s2.name : '';
     const panel = document.getElementById('recv-panel');
     if (!panel) return;
     const savedHost = this._getSavedHost();
-    const students = Storage.getStudents();
+    const students = Storage.getSiteStudents();
     const mode = Storage.getTransportMode();
     let html = '<div style="background:#F5F7FA;border:1px solid #E0E0E0;border-radius:10px;padding:12px 14px;margin-bottom:12px">';
     html += '<div style="font-size:13px;font-weight:700;margin-bottom:8px">📥 接收错题（来自老师电脑）</div>';
@@ -7580,7 +7605,7 @@ const name = s2 ? s2.name : '';
   _renderWeekWrongs() {
     const container = document.getElementById('admin-tab-content');
     const list = Storage.getWeekWrongs();
-    const students = Storage.getStudents();
+    const students = Storage.getSiteStudents();
     let html = '<div class="admin-section">';
     html += '<button class="back-btn" onclick="App._renderAdminScan()">← 返回上一级</button>';
     html += '<h3 style="margin:10px 0">📥 本周错题</h3>';
@@ -7831,7 +7856,7 @@ const toId = s && !s.remote ? parseInt(s.id) : null;
   _renderSendPanel(panelId, sel, successTextFn, afterFn) {
     const panel = document.getElementById(panelId);
     if (!panel) return;
-    const students = Storage.getStudents();
+    const students = Storage.getSiteStudents();
     const groups = {};
     sel.forEach(w => { (groups[w.studentId] = groups[w.studentId] || []).push(w); });
     const sids = Object.keys(groups);
@@ -7903,7 +7928,7 @@ const toId = s && !s.remote ? parseInt(s.id) : null;
 
   _renderWrongArchive() {
     const container = document.getElementById('admin-tab-content');
-    const students = Storage.getStudents();
+    const students = Storage.getSiteStudents();
     let html = '<div class="admin-section">';
     html += '<button class="back-btn" onclick="App._renderAdminScan()">← 返回上一级</button>';
     html += '<h3 style="margin:10px 0">📂 个人错题库（年级 / 学员 / 科目）</h3>';
@@ -8255,7 +8280,7 @@ html += '<div id="pub-recv-status" style="font-size:12px;color:var(--text-light)
       const status = document.getElementById('pub-recv-status');
       status.innerHTML = '<span style="color:#1565C0">正在连接云端接收...</span>';
       this._cloudPull().then(groups => {
-        const students = Storage.getStudents();
+        const students = Storage.getSiteStudents();
         const items = [];
         Object.keys(groups).forEach(name => {
           const s = students.find(x => x.name === name);
@@ -8285,7 +8310,7 @@ html += '<div id="pub-recv-status" style="font-size:12px;color:var(--text-light)
       if (!host) { status.innerHTML = '<span style="color:#C62828">请填写电脑 IP</span>'; return; }
       this._saveHost(host);
       status.innerHTML = '<span style="color:#1565C0">正在连接电脑接收...</span>';
-      const students = Storage.getStudents().filter(s => this._gradeAllowed(Storage.getCurrentGrade(s)));
+      const students = Storage.getSiteStudents().filter(s => this._gradeAllowed(Storage.getCurrentGrade(s)));
       const seq = [this._lanGet('http://' + host + ':8899/pull?student=' + encodeURIComponent('公共错题库')).then(res => {
         if (!res.ok) return [];
         let items = [];
@@ -8783,10 +8808,11 @@ students.forEach(s => {
           removed.push({ name: r.name, grade: r.grade });
         }
       });
-      const students = Storage.getStudents().map(s => ({
+      const students = Storage.getSiteStudents().map(s => ({
         name: s.name,
         grade: Storage.getCurrentGrade(s),
-        createdAt: s.createdAt || ''
+        createdAt: s.createdAt || '',
+        site: s.site || ''
       }));
       if (!students.length && !removed.length && !newStu.length) return Promise.resolve();
       const payloadObj = { students: students };
@@ -8846,7 +8872,7 @@ students.forEach(s => {
   _fetchAllStudents() {
     return new Promise((resolve) => {
       try {
-        const local = Storage.getStudents().map(s => ({
+        const local = Storage.getSiteStudents().map(s => ({
           id: s.id,
           name: s.name,
           grade: Storage.getCurrentGrade(s),
@@ -8865,7 +8891,7 @@ students.forEach(s => {
           });
           resolve(merged);
         }).catch(() => resolve(local));
-      } catch (e) { resolve(Storage.getStudents()); }
+      } catch (e) { resolve(Storage.getSiteStudents()); }
     });
   },
 
@@ -9839,7 +9865,7 @@ if (this._apkVersion) {
     if (restoredCount > 0 && !restoredOk) {
       html += '<div class="login-restore-notice" style="background:#E8F5E9;color:#2E7D32;border:1px solid #A5D6A7;border-radius:10px;padding:10px 14px;margin:8px 16px;font-size:13px;text-align:center">✅ 已恢复 ' + restoredCount + ' 名学员的学习资料</div>';
     }
-    if (Storage.getStudents().length === 0) {
+    if (Storage.getSiteStudents().length === 0) {
     }
     html += '<div class="login-header">';
     html += '<div class="login-logo"><span class="logo-pj">PJ</span><span class="logo-sub">培基家园</span></div>';
@@ -16425,4 +16451,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260904-1733';
+window.__SERVER_VER = '20260906-1734';
