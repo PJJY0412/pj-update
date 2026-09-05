@@ -258,6 +258,23 @@ const Storage = {
     return list;
   },
 
+  // 平板当前地点：连接哪个地点的电脑，就在 _syncStudentsFromCloud 时经 receiver /site 学到。
+  // 平板自由流动，地点由"连到的电脑"唯一决定，无需手动填写（勿回退）。
+  getMySite() {
+    try { return localStorage.getItem('vocab_mySite') || ''; } catch (e) { return ''; }
+  },
+
+  setMySite(site) {
+    try { localStorage.setItem('vocab_mySite', site || ''); } catch (e) {}
+  },
+
+  // 只读当前地点的注册学员：site 匹配本地点，或历史无 site（老数据视为本地点，兼容既有名单）。
+  // 内部 id 关联（登录/进度/作业按 studentId 取数）请用 getStudents()，勿直接过滤，避免数据串位。
+  getSiteStudents() {
+    const my = this.getMySite();
+    return this.getStudents().filter(s => !s.site || !my || s.site === my);
+  },
+
   addStudent(name, grade, createdAt) {
     const prev = this._studentId;
     this._studentId = null;
@@ -275,7 +292,8 @@ const Storage = {
       name: name,
       grade: grade || 1,
       createdAt: created.toISOString(),
-      gradeStartYear: this._academicStartYear(created)
+      gradeStartYear: this._academicStartYear(created),
+      site: this.getMySite() || ''
     };
     students.push(student);
     this.save('students', students);
@@ -312,7 +330,8 @@ const Storage = {
   },
 
   findStudent(name) {
-    var list = this.getStudents();
+    // 站点隔离：登录/重名判断只在本地点注册学员内搜；平板自由流动，不可登录他点学员（勿回退）
+    var list = this.getSiteStudents();
     console.log('findStudent: name=' + name + ' count=' + list.length + ' students=' + JSON.stringify(list.map(function(s){return s.name;})));
     return list.find(s => s.name === name) || null;
   },
@@ -337,6 +356,8 @@ const Storage = {
         keep.id = local.id;
         if (local.grade != null) keep.grade = local.grade;
         if (local.gradeStartYear != null) keep.gradeStartYear = local.gradeStartYear;
+        // 地点以本地为准（本地先注册/先接收的档案含本地点 site；云端名单可能漏带 site）
+        if (local.site) keep.site = local.site;
         // 注册时间取"最早"：远端自动建档的副本（晚于原始注册）若不收敛，8/31 学年滚动后
         // 各设备算出的当前年级相差 1，会交替改写电脑端学员库文件夹（二年级↔三年级 往复）。
         // 统一取最早注册时间让所有设备口径一致（勿回退）
