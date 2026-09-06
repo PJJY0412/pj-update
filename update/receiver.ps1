@@ -15,7 +15,7 @@ $deletedStudentsFile = Join-Path $PSScriptRoot '已删学员.json'
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260904-1'
+$script:SelfVer = '20260906-1'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -147,6 +147,80 @@ function Get-LocalSite {
     if (-not $site) { $site = $env:COMPUTERNAME }
     $script:siteId = $site
     return $site
+}
+
+# 与 app.js _splitManualMath 同等待的数学手动项拆分：
+# 按 逗号/分号/换行 必分；段内连续空格仅当"两侧都不是运算符(+ - × ÷ x X * / =)"时切分。
+# 这样 "7+2=9 4x5=20" 拆两条，又不拆碎 "9 ÷ 3" / "1.5 + 2.5" / "5 - 7 = -2"（空格紧邻运算符=式内分隔符）。
+function Split-ManualMath($str) {
+    $out = [System.Collections.Generic.List[string]]::new()
+    $opRe = '[+\-×÷xX*=/]'
+    foreach ($seg in ([string]$str).Split(@([char]',' , [char]'，', [char]';', [char]'；', [char]10, [char]13), [System.StringSplitOptions]::None)) {
+        $cur = ''
+        for ($i = 0; $i -lt $seg.Length; $i++) {
+            $ch = $seg[$i]
+            if ([char]::IsWhiteSpace($ch)) {
+                $prev = if ($i -gt 0) { $seg[$i - 1] } else { $null }
+                $next = if ($i -lt $seg.Length - 1) { $seg[$i + 1] } else { $null }
+                $prevOp = ($null -ne $prev -and [regex]::IsMatch([string]$prev, $opRe))
+                $nextOp = ($null -ne $next -and [regex]::IsMatch([string]$next, $opRe))
+                if ($cur.Length -gt 0 -and -not $prevOp -and -not $nextOp) { $out.Add($cur); $cur = '' }
+                continue
+            }
+            $cur += $ch
+        }
+        if ($cur.Length -gt 0) { $out.Add($cur) }
+    }
+    return $out.ToArray()
+}
+
+# 聚合"该学员在电脑端任务缓存里各科布置的作业词条数"，与平板用 getHomeworkWords(hw,subject).length 口径一致。
+# 无需教材词库：任务缓存里 hw 恒为 units:[] + wordKeys + manual，wordKeys 每 key 恒计 1 词条（命中/兜底均 1），
+# 仅 manual 需按科目展开——chinese/english 每项 1、math 用 Split-ManualMath 拆空格。
+function Get-StudentHomeworkSummary {
+    $taskFile = Join-Path $PSScriptRoot '任务缓存.json'
+    $sum = @{}
+    if (-not (Test-Path -LiteralPath $taskFile)) { return ,$sum }
+    $recs = @()
+    try {
+        $txt = [System.IO.File]::ReadAllText($taskFile)
+        $parsed = ConvertFrom-Json -InputObject $txt
+        $recs = @($parsed)
+    } catch { return ,$sum }
+    foreach ($r in $recs) {
+        if ($null -eq $r -or [string]::IsNullOrEmpty($r.toName)) { continue }
+        $subject = if ($null -ne $r.subject) { [string]$r.subject } else { '' }
+        if ($null -eq $r.hw -or $subject -eq '') { continue }
+        $key = [string]$r.toName
+        if (-not $sum.ContainsKey($key)) { $sum[$key] = @{ english = 0; chinese = 0; math = 0 } }
+        $seen = @{}
+        foreach ($wk in @($r.hw.wordKeys)) {
+            $w = [string]$wk
+            $s = $subject
+            if ($w.StartsWith('c:')) { $s = 'chinese'; $w = $w.Substring(2) }
+            elseif ($w.StartsWith('m:')) { $s = 'math'; $w = $w.Substring(2) }
+            if ($s -ne $subject) { continue }
+            if (-not $seen.ContainsKey("{$s}|{$w}")) { $seen["{$s}|{$w}"] = $true; $sum[$key][$s]++ }
+        }
+        foreach ($mn in @($r.hw.manual)) {
+            $w = [string]$mn
+            $s = $subject
+            for ($cv = 0; $cv -lt 4; $cv++) {
+                if ($w.StartsWith('c:')) { $s = 'chinese'; $w = $w.Substring(2); continue }
+                if ($w.StartsWith('m:')) { $s = 'math'; $w = $w.Substring(2); continue }
+                break
+            }
+            if ($s -ne $subject) { continue }
+            $parts = @()
+            if ($s -eq 'math') { $parts = @(Split-ManualMath $w) }
+            else { foreach ($p in ($w -split '[,，;；\s]+')) { $p = ([string]$p).Trim(); if ($p.Length -gt 0) { $parts += ($p -replace '^[cm]:+', '') } } }
+            foreach ($p in $parts) {
+                if ([string]::IsNullOrEmpty($p)) { continue }
+                if (-not $seen.ContainsKey("{$s}|{$p}")) { $seen["{$s}|{$p}"] = $true; $sum[$key][$s]++ }
+            }
+        }
+    }
+    return ,$sum
 }
 function LogSiteIfNeeded {
     if (-not $script:siteLogged) {
@@ -316,7 +390,9 @@ function Sync-StudentsToCloud {
         $api = "https://api.github.com/repos/$repo/contents/update/students.json"
         $h = @{ Authorization = "token $token"; 'User-Agent' = 'pj-receiver'; Accept = 'application/vnd.github+json' }
 
-        # 读云端现有名单 → 剔除本地点记录 → 合并本地点最新名单 → 写回（保留其他地点记录，勿整体覆盖）
+        # 读云端现有名单 → 全量唯一化（按 name#grade，非空 site 优先；空 site 仅当无同名非空时保留）
+        # → 剔除本地点记录 → 合并本地点最新名单 → 再次唯一化（本地点优先）→ 写回。
+        # 幂等收敛：无论云端历史多少重复/畸形(含 {value:[...]} 包裹)都能收敛到唯一列表，不再逐周期膨胀。
         $finalJson = $null
         for ($attempt = 0; $attempt -lt 3 -and $null -eq $finalJson; $attempt++) {
             $sha = ''
@@ -327,19 +403,54 @@ function Sync-StudentsToCloud {
                 if ($existing.content) {
                     try {
                         $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$existing.content))
-                        $cloudList = @($decoded | ConvertFrom-Json)
-                        foreach ($c in $cloudList) {
-                            if ($null -eq $c) { continue }
+                        $cloudRaw = @(ConvertFrom-Json -InputObject $decoded)
+                        # 畸形包裹防御：顶层 {value:[...]} 时取 .value（历史曾出现双层包裹）
+                        if ($cloudRaw.Count -eq 1 -and $cloudRaw[0] -is [PSCustomObject] -and $cloudRaw[0].PSObject.Properties['value']) {
+                            $cloudRaw = @($cloudRaw[0].value)
+                        }
+                        # 第一轮唯一化：同 name#grade 只留一条，非空 site 优先
+                        $uniq = @{}
+                        foreach ($c in $cloudRaw) {
+                            if ($null -eq $c -or [string]::IsNullOrEmpty([string]$c.name)) { continue }
+                            $key = ([string]$c.name) + '#' + ([string]$c.grade)
                             $cs = ''
                             try { $cs = [string]$c.site } catch {}
+                            if (-not $uniq.ContainsKey($key)) { $uniq[$key] = $c }
+                            else {
+                                $ex2 = $uniq[$key]; $exs = ''
+                                try { $exs = [string]$ex2.site } catch {}
+                                if ([string]::IsNullOrEmpty($exs) -and -not [string]::IsNullOrEmpty($cs)) { $uniq[$key] = $c }
+                            }
+                        }
+                        foreach ($c in $uniq.Values) {
+                            $cs = ''
+                            try { $cs = [string]$c.site } catch {}
+                            # 剔除本地点记录：本地点口径一律以下方本地最新名单为准（含签到/删除）
                             if ($cs -ne $siteName) { $keepList += $c }
                         }
-                    } catch {}
+                    } catch {
+                        Log ("云端学员同步：读云端名单异常，按仅有本地点名单推送：{0}" -f $_.Exception.Message)
+                    }
                 }
             } catch {}
 
+            # 第二轮唯一化：合并后同 name#grade 以本地点记录优先（权威），他站点名同键不冲突或保留其一
             $merged = @($keepList) + @($list)
-            $mergedSorted = @($merged | Sort-Object @{ Expression = { [string]$_.name }; Ascending = $true })
+            $finalMap = @{}
+            foreach ($c in $merged) {
+                if ($null -eq $c -or [string]::IsNullOrEmpty([string]$c.name)) { continue }
+                $key = ([string]$c.name) + '#' + ([string]$c.grade)
+                $cs = ''
+                try { $cs = [string]$c.site } catch {}
+                $isLocal = $cs -eq $siteName
+                if (-not $finalMap.ContainsKey($key)) { $finalMap[$key] = $c; continue }
+                $ex2 = $finalMap[$key]; $exs = ''
+                try { $exs = [string]$ex2.site } catch {}
+                $exLocal = $exs -eq $siteName
+                if (-not $exLocal -and $isLocal) { $finalMap[$key] = $c }   # 本地点记录覆盖他站/空 site 同名（本地点权威）
+                elseif (-not $exLocal -and $exs -ne $cs) { $finalMap[$key] = $c }  # 都非本地且站点不同：保留后到
+            }
+            $mergedSorted = @($finalMap.Values | Sort-Object @{ Expression = { [string]$_.name }; Ascending = $true })
             $finalJson = $mergedSorted | ConvertTo-Json -Compress -Depth 4
             $contentB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($finalJson))
             $body = @{ message = "sync students ($siteName)"; content = $contentB64; branch = 'master' }
@@ -1687,6 +1798,47 @@ function Handle-Http {
                 }
             }
             Send-Response $stream '200 OK' 'application/json; charset=utf-8' ($list | ConvertTo-Json -Compress -Depth 4)
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/students-homework') {
+            # 手机/平板布置页展示"各学员语数英作业情况"用（方案A）：与 /students.json 同源列出学员，
+            # 并为每个学员附带从任务缓存聚合的 hw:{english,chinese,math} 作业词条数（全设备超集，与平板 getHomeworkWords 口径一致）。
+            # 纯增量只读接口：不改任何写盘/本地存储逻辑，不影响平板现有布置功能。
+            $siteName = Get-LocalSite
+            $stuList = @()
+            $stDir = Join-Path $baseDir '学员库'
+            if (Test-Path $stDir) {
+                $dead = @{}
+                foreach ($d in @(Get-DeletedStudents)) {
+                    if ($null -ne $d -and $d.name) { $dead[[string]$d.name] = $true }
+                }
+                Get-ChildItem $stDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                    $gd = ($_.Name -replace '年级$', '')
+                    Get-ChildItem $_.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                        $name = $_.Name
+                        $pf = Join-Path $_.FullName 'profile.json'
+                        if (Test-Path $pf) {
+                            try {
+                                $j = [System.IO.File]::ReadAllText($pf) | ConvertFrom-Json
+                                if ($j.name) { $name = [string]$j.name }
+                            } catch {}
+                        }
+                        if (-not $dead.ContainsKey($name)) { $stuList += [PSCustomObject]@{ name = $name; grade = $gd } }
+                    }
+                }
+            }
+            $sum = Get-StudentHomeworkSummary
+            $out = @()
+            foreach ($s in $stuList) {
+                $found = if ($sum.ContainsKey([string]$s.name)) { $sum[[string]$s.name] } else { $null }
+                $hwObj = @{ english = 0; chinese = 0; math = 0 }
+                if ($null -ne $found) {
+                    $hwObj.english = [int]$found.english
+                    $hwObj.chinese = [int]$found.chinese
+                    $hwObj.math = [int]$found.math
+                }
+                $out += [PSCustomObject]@{ name = $s.name; grade = $s.grade; site = $siteName; hw = $hwObj }
+            }
+            Send-Response $stream '200 OK' 'application/json; charset=utf-8' ($out | ConvertTo-Json -Compress -Depth 6)
         }
         elseif ($method -eq 'GET' -and $pathOnly -eq '/site') {
             # 下发本机地点标识：平板自由流动时，连到哪台电脑就归属哪个地点，平板据此只读本地点注册学员
