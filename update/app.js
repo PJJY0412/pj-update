@@ -4592,7 +4592,7 @@ main.innerHTML = html;
     html += '<select class="login-input" id="reg-grade" style="appearance:auto;-webkit-appearance:auto">';
     for (var g = 1; g <= 6; g++) html += '<option value="' + g + '">' + g + ' 年级</option>';
     html += '</select>';
-    html += '<button class="reg-btn" id="reg-btn">注 册</button>';
+    html += '<div style="display:flex;align-items:center;gap:8px"><button class="reg-btn" id="reg-btn" style="flex:1">注 册</button><span style="font-size:12px;color:#C62828;flex-shrink:0">（注意选填学员对应的年级）</span></div>';
     html += '<div class="login-error" id="reg-error"></div>';
     html += '<div class="login-error" id="reg-ok" style="color:#2E7D32"></div>';
     html += '</div>';
@@ -4608,7 +4608,7 @@ main.innerHTML = html;
     this._adminFilter = filterPeriod || this._adminFilter || 'all';
     this._adminGrade = null;
     const container = document.getElementById('admin-tab-content');
-    const allData = Storage.getAllStudentsData();
+    const allData = this._adminTier === 'super' ? Storage.getAllStudentsData() : Storage.getSiteStudentsData();
     this._loadRemoteStudents().then(remote => {
       this._renderAdminGradeFolders(container, allData, remote || []);
     });
@@ -4823,7 +4823,7 @@ main.innerHTML = html;
   _renderInactiveStudents(filterPeriod) {
     this._adminFilter = filterPeriod || this._adminFilter || 'today';
     const container = document.getElementById('admin-tab-content');
-    const local = Storage.getAllStudentsData();
+    const local = this._adminTier === 'super' ? Storage.getAllStudentsData() : Storage.getSiteStudentsData();
     const self = this;
     this._loadRemoteStudents().then(remote => {
       self._loadRemoteReports().then(reports => {
@@ -16451,4 +16451,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260906-1734';
+window.__SERVER_VER = '20260906-1735';
