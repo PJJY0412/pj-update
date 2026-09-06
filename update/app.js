@@ -4592,7 +4592,7 @@ main.innerHTML = html;
     html += '<select class="login-input" id="reg-grade" style="appearance:auto;-webkit-appearance:auto">';
     for (var g = 1; g <= 6; g++) html += '<option value="' + g + '">' + g + ' 年级</option>';
     html += '</select>';
-    html += '<div style="display:flex;align-items:center;gap:8px"><button class="reg-btn" id="reg-btn" style="flex:1">注 册</button><span style="font-size:12px;color:#C62828;flex-shrink:0">（注意选填学员对应的年级）</span></div>';
+    html += '<div style="display:flex;align-items:center;gap:8px"><button class="reg-btn" id="reg-btn" style="flex:1;white-space:normal;line-height:1.3">注 册<span style="font-size:11px;opacity:.75">（请选学员对应年级，以免注册名单混乱）</span></button></div>';
     html += '<div class="login-error" id="reg-error"></div>';
     html += '<div class="login-error" id="reg-ok" style="color:#2E7D32"></div>';
     html += '</div>';
@@ -5079,6 +5079,7 @@ main.innerHTML = html;
         h += '<input type="checkbox" class="hw-check" data-idx="' + idx + '"' + (checkedIdx[idx] ? ' checked' : '') + ' style="margin-top:8px;width:18px;height:18px;flex-shrink:0">';
         h += '<div style="flex:1">';
         h += '<div class="asc-val">' + this._h(item.name) + ' · ' + this._h(item.grade) + '年级</div>';
+        const disp = [];
         if (item.hw) {
           cols.forEach(c => {
             const hw = item.hw[c.subj];
@@ -5086,10 +5087,20 @@ main.innerHTML = html;
             const words = this.getHomeworkWords(hw, c.subj).length;
             if (words === 0) return;
             const unitTxt = c.subj === 'chinese' ? '字' : c.subj === 'math' ? '题' : '词';
-            h += '<div class="asc-lbl">' + c.label + ' ' + c.icon + ' ' + words + ' ' + unitTxt
-              + (hw.assignedAt ? '（' + new Date(hw.assignedAt).toLocaleDateString('zh-CN') + '）' : '') + '</div>';
+            disp.push({ label: c.label, icon: c.icon, words: words, unitTxt: unitTxt, date: hw.assignedAt || '' });
+          });
+        } else if (item.remoteHw) {
+          cols.forEach(c => {
+            const n = parseInt(item.remoteHw[c.subj] || 0, 10) || 0;
+            if (n <= 0) return;
+            const unitTxt = c.subj === 'chinese' ? '字' : c.subj === 'math' ? '题' : '词';
+            disp.push({ label: c.label, icon: c.icon, words: n, unitTxt: unitTxt, date: '' });
           });
         }
+        disp.forEach(d => {
+          h += '<div class="asc-lbl">' + d.label + ' ' + d.icon + ' ' + d.words + ' ' + d.unitTxt
+            + (d.date ? '（' + new Date(d.date).toLocaleDateString('zh-CN') + '）' : '') + '</div>';
+        });
         h += '</div>';
         h += '<span style="color:var(--primary);font-size:13px">✏️ 布置</span>';
         h += '</div>';
@@ -5132,18 +5143,32 @@ main.innerHTML = html;
     try {
       const host = this._getSavedHost();
       if (host) {
+        const fillRemote = (arr) => {
+          arr.forEach(s => {
+            const grade = String(s.grade || '').replace('年级', '');
+            if (!gradeFilter(grade)) return;
+            let it = list.find(x => x.name === s.name && String(x.grade) === grade);
+            if (!it) {
+              it = { name: s.name, grade: grade, localId: null, hw: null };
+              list.push(it);
+            }
+            if (s.hw) it.remoteHw = s.hw;
+          });
+          render();
+        };
         this._lanGet('http://' + host + ':8899/students').then(res => {
           try {
             const j = JSON.parse(res.body || '{}');
             const arr = (j.students || []).slice();
             if (!arr.length) return;
-            arr.forEach(s => {
-              const grade = String(s.grade || '').replace('年级', '');
-              if (!gradeFilter(grade)) return;
-              if (list.some(x => x.name === s.name && String(x.grade) === grade)) return;
-              list.push({ name: s.name, grade: grade, localId: null, hw: null });
-            });
-            render();
+            fillRemote(arr);
+          } catch (e) {}
+        });
+        this._lanGet('http://' + host + ':8899/students-homework').then(res => {
+          try {
+            const arr = JSON.parse(res.body || '[]');
+            if (!Array.isArray(arr) || !arr.length) return;
+            fillRemote(arr);
           } catch (e) {}
         });
       }
@@ -9865,7 +9890,8 @@ if (this._apkVersion) {
     if (restoredCount > 0 && !restoredOk) {
       html += '<div class="login-restore-notice" style="background:#E8F5E9;color:#2E7D32;border:1px solid #A5D6A7;border-radius:10px;padding:10px 14px;margin:8px 16px;font-size:13px;text-align:center">✅ 已恢复 ' + restoredCount + ' 名学员的学习资料</div>';
     }
-    if (Storage.getSiteStudents().length === 0) {
+    if (!Storage.getMySite()) {
+      html += '<div class="login-site-notice" style="background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;border-radius:10px;padding:10px 14px;margin:8px 16px;font-size:13px;text-align:center">📡 未连接本地点电脑，仅显示本机历史学员<br><span style="font-size:12px">请确认电脑 IP 正确、并连接本地点电脑所在网络后登录，即可同步/看到本地点注册学员名单</span></div>';
     }
     html += '<div class="login-header">';
     html += '<div class="login-logo"><span class="logo-pj">PJ</span><span class="logo-sub">培基家园</span></div>';
@@ -16451,4 +16477,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260906-1735';
+window.__SERVER_VER = '20260907-1736';
