@@ -270,9 +270,11 @@ const Storage = {
 
   // 只读当前地点的注册学员：site 匹配本地点，或历史无 site（老数据视为本地点，兼容既有名单）。
   // 内部 id 关联（登录/进度/作业按 studentId 取数）请用 getStudents()，勿直接过滤，避免数据串位。
+  // 防云直连泄漏：平板从未连接任何地点电脑（my 为空）时，只保留无 site 老数据，不再显示全部点名册（勿回退）
   getSiteStudents() {
     const my = this.getMySite();
-    return this.getStudents().filter(s => !s.site || !my || s.site === my);
+    if (!my) return this.getStudents().filter(s => !s.site);
+    return this.getStudents().filter(s => !s.site || s.site === my);
   },
 
   addStudent(name, grade, createdAt) {
