@@ -1219,6 +1219,24 @@ const Storage = {
     return result;
   },
 
+  // 只读当前地点学员的完整数据（进度/会话），与 getAllStudentsData 同构但按本地点过滤。
+  // 管理后台"学员汇总/未练习"用此隔离各点名单；超级密码登录时用 getAllStudentsData 看全部点。
+  getSiteStudentsData() {
+    const outer = this._studentId;
+    this._studentId = null;
+    const students = this.getSiteStudents();
+    const result = students.map(s => {
+      const prev = this._studentId;
+      this._studentId = s.id;
+      const progress = this.getProgress();
+      const sessions = this.getSessions();
+      this._studentId = prev;
+      return { student: s, progress, sessions };
+    });
+    this._studentId = outer;
+    return result;
+  },
+
   getStudentData(studentId) {
     const prev = this._studentId;
     this._studentId = studentId;
