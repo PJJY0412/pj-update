@@ -15,7 +15,7 @@ $deletedStudentsFile = Join-Path $PSScriptRoot '已删学员.json'
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260906-1'
+$script:SelfVer = '20260906-2'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -343,9 +343,12 @@ function Save-ItemsToFolder($zone, $grade, $student, $items) {
     Log ("{0}：学员『{1}』（{2}）新增 {3} 题，累计 {4} 题 → {5}\{6}\{7}\{8}" -f $action, $student, $gradeName, $added, @($all).Count, (Split-Path $baseDir -Leaf), $zone, $gradeName, $safe)
 }
 
-# 推送本地点学员名单到云端（GitHub update/students.json）：按"地点(site)"合并，不是整份覆盖。
-# 每台地点电脑都把自己的学员库名单合并进云端（保留其他地点的记录），删除的学员因不在本名单中
-# 也随之从云端消失 → 阻断"删除后复活"；新注册学员随周期推送自动上云 → 各地点平板按 site 过滤即隔离。
+# 推送本地点学员名单到云端（GitHub update/students.json）：按"地点(site)"分桶存储，互不覆盖。
+# 云端格式：{ "<站点名>": [ {name,grade,createdAt,site}, ... ], "__legacy": [空 site 历史] }。
+# 每台地点电脑只重写自己那个桶 → 无跨站点合并/去重逻辑；删除的学员随本桶重算自然消失
+# （阻断"删除后复活"）；新注册学员随周期推送自动进自己桶 → 各地点平板按自己的 site 取桶即隔离。
+# 若读到旧扁平数组格式（历史数据）则自动迁移为分桶对象（空 site 记录归入 __legacy；同名/同年级
+# 且站点桶已含非空 site 的幽灵在取桶排序阶段被后写覆盖，不单独清理亦可，幂等收敛）。
 function Sync-StudentsToCloud {
     try {
         $siteName = Get-LocalSite
@@ -390,43 +393,43 @@ function Sync-StudentsToCloud {
         $api = "https://api.github.com/repos/$repo/contents/update/students.json"
         $h = @{ Authorization = "token $token"; 'User-Agent' = 'pj-receiver'; Accept = 'application/vnd.github+json' }
 
-        # 读云端现有名单 → 全量唯一化（按 name#grade，非空 site 优先；空 site 仅当无同名非空时保留）
-        # → 剔除本地点记录 → 合并本地点最新名单 → 再次唯一化（本地点优先）→ 写回。
-        # 幂等收敛：无论云端历史多少重复/畸形(含 {value:[...]} 包裹)都能收敛到唯一列表，不再逐周期膨胀。
+        # 读云端现有名单 → 按 site 分桶；本地点桶 = 本地点最新名单（整桶重写），其他站点桶原样保留。
+        # 兼容三态：新分桶对象 / 旧扁平数组（自动迁移）/ 畸形包裹 {value:[...]}（解包）。
         $finalJson = $null
         for ($attempt = 0; $attempt -lt 3 -and $null -eq $finalJson; $attempt++) {
             $sha = ''
-            $keepList = @()
+            $cloudObj = @{}
             try {
                 $existing = Invoke-RestMethod -Uri $api -Headers $h -Method Get -TimeoutSec 30
                 if ($existing.sha) { $sha = [string]$existing.sha }
                 if ($existing.content) {
                     try {
                         $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$existing.content))
-                        $cloudRaw = @(ConvertFrom-Json -InputObject $decoded)
+                        $cloudRaw = ConvertFrom-Json -InputObject $decoded
                         # 畸形包裹防御：顶层 {value:[...]} 时取 .value（历史曾出现双层包裹）
-                        if ($cloudRaw.Count -eq 1 -and $cloudRaw[0] -is [PSCustomObject] -and $cloudRaw[0].PSObject.Properties['value']) {
-                            $cloudRaw = @($cloudRaw[0].value)
+                        if ($cloudRaw -is [PSCustomObject] -and -not $cloudRaw.PSObject.Properties['name'] -and $cloudRaw.PSObject.Properties['value']) {
+                            $cloudRaw = $cloudRaw.value
                         }
-                        # 第一轮唯一化：同 name#grade 只留一条，非空 site 优先
-                        $uniq = @{}
-                        foreach ($c in $cloudRaw) {
-                            if ($null -eq $c -or [string]::IsNullOrEmpty([string]$c.name)) { continue }
-                            $key = ([string]$c.name) + '#' + ([string]$c.grade)
-                            $cs = ''
-                            try { $cs = [string]$c.site } catch {}
-                            if (-not $uniq.ContainsKey($key)) { $uniq[$key] = $c }
-                            else {
-                                $ex2 = $uniq[$key]; $exs = ''
-                                try { $exs = [string]$ex2.site } catch {}
-                                if ([string]::IsNullOrEmpty($exs) -and -not [string]::IsNullOrEmpty($cs)) { $uniq[$key] = $c }
+                        if ($cloudRaw -is [System.Array]) {
+                            # 旧扁平数组 → 自动迁移为分桶对象：非空 site 入其桶，空 site 归 __legacy
+                            $tmp = @{}
+                            foreach ($c in @($cloudRaw)) {
+                                if ($null -eq $c -or [string]::IsNullOrEmpty([string]$c.name)) { continue }
+                                $cs = ''
+                                try { $cs = [string]$c.site } catch {}
+                                $bk = if ([string]::IsNullOrEmpty($cs)) { '__legacy' } else { $cs }
+                                if (-not $tmp.ContainsKey($bk)) { $tmp[$bk] = [System.Collections.Generic.List[object]]::new() }
+                                $tmp[$bk].Add($c)
                             }
-                        }
-                        foreach ($c in $uniq.Values) {
-                            $cs = ''
-                            try { $cs = [string]$c.site } catch {}
-                            # 剔除本地点记录：本地点口径一律以下方本地最新名单为准（含签到/删除）
-                            if ($cs -ne $siteName) { $keepList += $c }
+                            foreach ($k in $tmp.Keys) { $cloudObj[$k] = @($tmp[$k]) }
+                        } elseif ($cloudRaw -is [PSCustomObject]) {
+                            # 已是分桶对象：逐个桶取数组
+                            foreach ($p in $cloudRaw.PSObject.Properties) {
+                                if ($p.Name -eq 'name' -or $p.Name -eq 'value' -or $p.Name -eq 'sha') { continue }
+                                if ($p.Value -is [System.Array] -or $p.Value -is [System.Collections.IList]) {
+                                    $cloudObj[$p.Name] = @($p.Value)
+                                }
+                            }
                         }
                     } catch {
                         Log ("云端学员同步：读云端名单异常，按仅有本地点名单推送：{0}" -f $_.Exception.Message)
@@ -434,24 +437,16 @@ function Sync-StudentsToCloud {
                 }
             } catch {}
 
-            # 第二轮唯一化：合并后同 name#grade 以本地点记录优先（权威），他站点名同键不冲突或保留其一
-            $merged = @($keepList) + @($list)
-            $finalMap = @{}
-            foreach ($c in $merged) {
-                if ($null -eq $c -or [string]::IsNullOrEmpty([string]$c.name)) { continue }
-                $key = ([string]$c.name) + '#' + ([string]$c.grade)
-                $cs = ''
-                try { $cs = [string]$c.site } catch {}
-                $isLocal = $cs -eq $siteName
-                if (-not $finalMap.ContainsKey($key)) { $finalMap[$key] = $c; continue }
-                $ex2 = $finalMap[$key]; $exs = ''
-                try { $exs = [string]$ex2.site } catch {}
-                $exLocal = $exs -eq $siteName
-                if (-not $exLocal -and $isLocal) { $finalMap[$key] = $c }   # 本地点记录覆盖他站/空 site 同名（本地点权威）
-                elseif (-not $exLocal -and $exs -ne $cs) { $finalMap[$key] = $c }  # 都非本地且站点不同：保留后到
+            # 只重写自己桶：本地点桶 = 本地点最新名单，其他桶原样保留（无跨站点合并/去重逻辑）。
+            # 同名空 site 幽灵（__legacy 里与本站点同 name#grade 的记录）由平板端 getSiteStudents 的自然过滤兜底，
+            # 云端此处不拆他桶，避免误删其他地点数据。
+            $cloudObj[$siteName] = @($list)
+            # 输出前按桶名排序；桶内按 name 排序（稳定可读，便于 diff）
+            $sortedObj = [ordered]@{}
+            foreach ($bn in ($cloudObj.Keys | Sort-Object)) {
+                $sortedObj[$bn] = @(@($cloudObj[$bn]) | Sort-Object @{ Expression = { [string]$_.name }; Ascending = $true })
             }
-            $mergedSorted = @($finalMap.Values | Sort-Object @{ Expression = { [string]$_.name }; Ascending = $true })
-            $finalJson = $mergedSorted | ConvertTo-Json -Compress -Depth 4
+            $finalJson = $sortedObj | ConvertTo-Json -Compress -Depth 6
             $contentB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($finalJson))
             $body = @{ message = "sync students ($siteName)"; content = $contentB64; branch = 'master' }
             if ($sha) { $body.sha = $sha }
@@ -463,7 +458,7 @@ function Sync-StudentsToCloud {
                 if ($attempt -lt 2) { Start-Sleep -Milliseconds 600 }
             }
         }
-        Log ("云端学员同步：[{0}] 已合并推送（本地点 {1} 人）" -f $siteName, $list.Count)
+        Log ("云端学员同步：[{0}] 已按站点分桶推送（本地点 {1} 人）" -f $siteName, $list.Count)
     } catch {
         Log ("云端学员同步失败：{0}" -f $_.Exception.Message)
     }
@@ -609,15 +604,37 @@ function Remove-StudentData([string]$name, [string]$grade) {
             }
         } catch { }
     }
-    # 6) 工具\更新\students.json（云端/局域网全量学员表）剔除同名，防止平板启动 mergeStudents 复活
+    # 6) 工具\更新\students.json（云端分桶名单镜像）剔除本地点桶同名，防止平板启动 mergeStudents 复活。
+    #    分桶格式 {站点:[...]}：仅剔本地点桶、其余站点桶原样保留（勿按扁平数组整表过滤，否则会把整桶清空，勿回退）
     $stuFile = Join-Path $updDir 'students.json'
     if (Test-Path $stuFile) {
         try {
-            $recs = @(Get-Content $stuFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            if ($recs.Count -gt 0) {
-                $kept = @($recs | Where-Object { -not ([string]::IsNullOrEmpty([string]($_.name)) -or [string]($_.name) -eq $nm) })
-                if ($kept.Count -lt $recs.Count) {
-                    [System.IO.File]::WriteAllText($stuFile, (ConvertTo-Json -InputObject @($kept) -Depth 6 -Compress), (New-Object System.Text.UTF8Encoding $false))
+            $data = Get-Content $stuFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($null -ne $data) {
+                if ($data -is [System.Array]) {
+                    # 旧扁平数组兼容（云端迁移为分桶后此分支不再走，仅防历史文件）
+                    $recs = @($data)
+                    $kept = @($recs | Where-Object { -not ([string]::IsNullOrEmpty([string]($_.name)) -or [string]($_.name) -eq $nm) })
+                    if ($kept.Count -lt $recs.Count) {
+                        [System.IO.File]::WriteAllText($stuFile, (ConvertTo-Json -InputObject @($kept) -Depth 6 -Compress), (New-Object System.Text.UTF8Encoding $false))
+                    }
+                } elseif ($data -is [PSCustomObject]) {
+                    $siteName = Get-LocalSite
+                    $outObj = [ordered]@{}
+                    $changed = $false
+                    foreach ($p in $data.PSObject.Properties) {
+                        $arr = if ($p.Value -is [System.Array]) { @($p.Value) } else { @($p.Value) }
+                        if ($p.Name -eq $siteName) {
+                            $na = @($arr | Where-Object { -not ([string]::IsNullOrEmpty([string]($_.name)) -or [string]($_.name) -eq $nm) })
+                            if ($na.Count -ne $arr.Count) { $changed = $true }
+                            $outObj[$p.Name] = $na
+                        } else {
+                            $outObj[$p.Name] = $arr
+                        }
+                    }
+                    if ($changed) {
+                        [System.IO.File]::WriteAllText($stuFile, ($outObj | ConvertTo-Json -Compress -Depth 6), (New-Object System.Text.UTF8Encoding $false))
+                    }
                 }
             }
         } catch { }
@@ -1856,18 +1873,35 @@ function Handle-Http {
             if ($null -ne $json) {
                 $stuFile = Join-Path $updDir 'students.json'
                 $students = @($json) + @()  # 确保是数组
-                # 合并去重（按 name）
+                # 合并去重（按 name），写入本地点分桶（其他站点桶原样保留，勿回退）
                 if (Test-Path $stuFile) {
-                    $existing = Get-Content $stuFile -Raw | ConvertFrom-Json
-                    $dict = @{}
-                    foreach ($s in @($existing) + @($students)) {
-                        if ($s -and $s.name) { $dict[$s.name] = $s }
+                    $data = Get-Content $stuFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($data -is [PSCustomObject]) {
+                        $siteName = Get-LocalSite
+                        $outObj = [ordered]@{}
+                        foreach ($p in $data.PSObject.Properties) {
+                            $arr = if ($p.Value -is [System.Array]) { @($p.Value) } else { @($p.Value) }
+                            $outObj[$p.Name] = $arr
+                        }
+                        $dict = @{}
+                        foreach ($s in @($outObj[$siteName]) + @($students)) {
+                            if ($s -and $s.name) { $dict[$s.name] = $s }
+                        }
+                        $outObj[$siteName] = $dict.Values
+                        $outObj | ConvertTo-Json -Compress -Depth 6 | Set-Content $stuFile -Encoding UTF8
+                    } else {
+                        # 旧扁平数组兼容：整表合并（历史文件），再回写为分桶对象
+                        $dict = @{}
+                        foreach ($s in @($data) + @($students)) {
+                            if ($s -and $s.name) { $dict[$s.name] = $s }
+                        }
+                        $bucket = @{ (Get-LocalSite) = ($dict.Values | Sort-Object -Property name) }
+                        $bucket | ConvertTo-Json -Compress -Depth 6 | Set-Content $stuFile -Encoding UTF8
                     }
-                    $merged = $dict.Values
                 } else {
-                    $merged = $students
+                    $bucket = @{ (Get-LocalSite) = ($students | Sort-Object -Property name) }
+                    $bucket | ConvertTo-Json -Compress -Depth 6 | Set-Content $stuFile -Encoding UTF8
                 }
-                $merged | ConvertTo-Json -Compress -Depth 5 | Set-Content $stuFile -Encoding UTF8
                 Send-Response $stream '200 OK' 'application/json' '{"ok":true}'
             } else {
                 Send-Response $stream '400 Bad Request' 'application/json' '{"ok":false,"err":"invalid json"}'
