@@ -4609,9 +4609,39 @@ main.innerHTML = html;
     this._adminGrade = null;
     const container = document.getElementById('admin-tab-content');
     const allData = this._adminTier === 'super' ? Storage.getAllStudentsData() : Storage.getSiteStudentsData();
+    const self = this;
     this._loadRemoteStudents().then(remote => {
-      this._renderAdminGradeFolders(container, allData, remote || []);
+      if (self._adminTier === 'super') {
+        self._fetchAllSitesRemote().then(allSites => {
+          self._renderAdminGradeFolders(container, allData, self._mergeAdminRemote(remote || [], allSites));
+        }).catch(() => self._renderAdminGradeFolders(container, allData, remote || []));
+        return;
+      }
+      self._renderAdminGradeFolders(container, allData, remote || []);
     });
+  },
+
+  // 超管专用：合并本机/本电脑远端 + 云端全部站点名单，按 name+grade 去重（不同站同名保留，靠 site 区分）
+  _mergeAdminRemote(baseRemote, allSites) {
+    const seen = {};
+    const out = [];
+    (baseRemote || []).forEach(s => {
+      const nm = String(s.name || '').trim();
+      if (!nm) return;
+      const key = nm + '|' + (parseInt(s.grade, 10) || 1);
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push({ name: s.name, grade: parseInt(s.grade, 10) || 1, createdAt: s.createdAt || '', site: s.site || '' });
+    });
+    (allSites || []).forEach(s => {
+      const nm = String(s.name || '').trim();
+      if (!nm) return;
+      const key = nm + '|' + (parseInt(s.grade, 10) || 1);
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push(s);
+    });
+    return out;
   },
 
   _renderAdminGradeFolders(container, allData, remote) {
@@ -4636,7 +4666,7 @@ main.innerHTML = html;
       html += '<button class="admin-filter-btn' + (this._adminFilter === p ? ' active' : '') + '" data-period="' + p + '">' + ({ all: '全部', today: '今日', week: '本周', month: '本月' }[p]) + '</button>';
     });
     html += '</div>';
-    html += '<div style="font-size:12px;color:var(--text-light);margin:10px 0 8px">📂 学员按年级归档，点击年级文件夹查看该年级学员（含电脑端学员库）</div>';
+    html += '<div style="font-size:12px;color:var(--text-light);margin:10px 0 8px">📂 学员按年级归档，点击年级文件夹查看该年级学员（含电脑端学员库' + (this._adminTier === 'super' ? '、云端全部站点名单' : '') + '）</div>';
     let any = false;
     for (let g = 1; g <= 6; g++) {
       const lc = groups[g].local.length;
@@ -4686,10 +4716,10 @@ main.innerHTML = html;
     }
     if (remote.length) {
       html += '<div class="admin-section" style="margin-top:14px">';
-      html += '<h3 style="margin:6px 0">🌐 电脑端学员库（' + grade + '年级）</h3>';
+      html += '<h3 style="margin:6px 0">🌐 ' + (this._adminTier === 'super' ? '全部站点学员库' : '电脑端学员库') + '（' + grade + '年级）</h3>';
       remote.forEach(s => {
         html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--card);border-radius:8px;padding:8px 12px;margin:4px 0">';
-        html += '<span style="font-weight:700">' + this._h(s.name) + '</span>';
+        html += '<span style="font-weight:700">' + this._h(s.name) + (s.site ? ' <span style="font-size:11px;color:var(--primary)">📍' + this._h(s.site) + '</span>' : '') + '</span>';
         html += '<span style="font-size:11px;color:var(--text-light)">' + (s.createdAt ? '注册 ' + new Date(s.createdAt).toLocaleDateString('zh-CN') : '') + '</span>';
         html += '</div>';
       });
@@ -4827,7 +4857,15 @@ main.innerHTML = html;
     const self = this;
     this._loadRemoteStudents().then(remote => {
       self._loadRemoteReports().then(reports => {
-        self._renderInactiveMerged(container, local, remote || [], reports || []);
+        if (self._adminTier !== 'super') {
+          self._renderInactiveMerged(container, local, remote || [], reports || []);
+          return;
+        }
+        self._fetchAllSitesRemote().then(allSites => {
+          self._renderInactiveMerged(container, local, self._mergeAdminRemote(remote || [], allSites), reports || []);
+        }).catch(() => {
+          self._renderInactiveMerged(container, local, remote || [], reports || []);
+        });
       });
     }).catch(() => {
       self._renderInactiveMerged(container, local, [], []);
@@ -4943,6 +4981,7 @@ main.innerHTML = html;
         name: s.name,
         grade: g,
         createdAt: s.createdAt || '',
+        site: s.site || '',
         sessions: [],
         lastTime: repT,
         totalXP: repStats.xp != null ? repStats.xp : 0,
@@ -4974,7 +5013,7 @@ main.innerHTML = html;
       count++;
       html += '<div class="admin-student-card">';
       html += '<div class="asc-header"><strong class="asc-name">' + this._h(x.name) + '</strong>';
-      html += '<span class="asc-date">' + x.grade + '年级' + (x.source === 'remote' ? ' · 他机学员' : '') + ' · 注册：' + (x.createdAt ? new Date(x.createdAt).toLocaleDateString('zh-CN') : '—') + '</span>';
+      html += '<span class="asc-date">' + x.grade + '年级' + (x.source === 'remote' ? ' · 他机学员' : '') + (x.site ? ' · 📍' + this._h(x.site) : '') + ' · 注册：' + (x.createdAt ? new Date(x.createdAt).toLocaleDateString('zh-CN') : '—') + '</span>';
       if (x.lastTime > 0) {
         html += '<span style="font-size:10px;color:var(--red)"> 最后练习：' + new Date(x.lastTime).toLocaleDateString('zh-CN') + '</span>';
       } else {
@@ -8745,7 +8784,10 @@ students.forEach(s => {
     return new Promise((resolve) => {
       const cb = 'lan' + (Date.now()) + Math.floor(Math.random() * 1000);
       this._lanCallbacks = this._lanCallbacks || {};
-      this._lanCallbacks[cb] = resolve;
+      // 仅在 Java 桥明确成功（ok:true）时终结；桥失败/超时不置 settled，
+      // 让 t=1200ms 的纯 fetch 兜底继续执行——删除补发（removed）等关键 payload
+      // 只要电脑可达就必然送达，避免 ok:false 抢先拦截 fetch 兜底导致永久丢失（勿回退）
+      this._lanCallbacks[cb] = (r) => { if (r && r.ok === true) { finish(r); } };
       let settled = false;
       const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
       setTimeout(() => finish({ ok: false, err: 'timeout' }), 3000);
@@ -8772,7 +8814,8 @@ students.forEach(s => {
     return new Promise((resolve) => {
       const cb = 'lan' + (Date.now()) + Math.floor(Math.random() * 1000);
       this._lanCallbacks = this._lanCallbacks || {};
-      this._lanCallbacks[cb] = resolve;
+      // 同 _lanPost：Java 桥仅 ok:true 时终结；失败时交给 1200ms 纯 fetch 兜底（勿回退）
+      this._lanCallbacks[cb] = (r) => { if (r && r.ok === true) { finish(r); } };
       let settled = false;
       const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
       setTimeout(() => finish({ ok: false, err: 'timeout' }), 3000);
@@ -8908,6 +8951,49 @@ students.forEach(s => {
           }).catch(() => resolve([]));
         }).catch(() => resolve([]));
       } catch (e) { resolve([]); }
+    });
+  },
+
+  // 超管专用只读通道：拉云端 students.json 的全部站点名单（分桶对象或扁平数组均可）。
+  // 仅返回 [{name,grade,createdAt,site}] 供展示，绝不用 mergeStudents 写本地存储——
+  // 站点隔离只依赖"平板本地名单"的写入过滤，此通道只读，不会把别站点学员混进本机名单（勿回退）
+  _fetchAllSitesRemote() {
+    return new Promise((resolve) => {
+      try {
+        const parseTxt = (txt) => {
+          try {
+            const data = JSON.parse(txt);
+            const out = [];
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+              Object.keys(data).forEach(site => {
+                const arr = data[site];
+                if (!Array.isArray(arr)) return;
+                arr.forEach(s => {
+                  if (!s || !s.name) return;
+                  out.push({ name: String(s.name).trim(), grade: parseInt(s.grade, 10) || 1, createdAt: s.createdAt || '', site: site === '__legacy' ? '' : site });
+                });
+              });
+            } else if (Array.isArray(data)) {
+              data.forEach(s => {
+                if (!s || !s.name) return;
+                out.push({ name: String(s.name).trim(), grade: parseInt(s.grade, 10) || 1, createdAt: s.createdAt || '', site: s.site || '' });
+              });
+            }
+            return out;
+          } catch (e) { return []; }
+        };
+        this._fetchJsonTimeout('https://cdn.jsdelivr.net/gh/PJJY0412/pj-update@master/update/students.json', 8000)
+          .then(txt => {
+            const list = parseTxt(txt);
+            if (list.length || /^[[{]/.test(String(txt).trim())) { resolve(list); }
+            else { throw new Error('empty'); }
+          })
+          .catch(() => {
+            this._fetchJsonTimeout('https://raw.githubusercontent.com/PJJY0412/pj-update/master/update/students.json', 8000)
+              .then(txt => resolve(parseTxt(txt)))
+              .catch(() => resolve(null));
+          });
+      } catch (e) { resolve(null); }
     });
   },
 
@@ -16494,4 +16580,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260907-1737';
+window.__SERVER_VER = '20260907-1738';
