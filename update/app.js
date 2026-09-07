@@ -5827,10 +5827,27 @@ if (this._apkNoticeShown) return;
       return this._fetchJsonTimeout('https://cdn.jsdelivr.net/gh/PJJY0412/pj-update@master/update/students.json', 8000)
         .then(txt => {
           try {
-            const list = JSON.parse(txt);
+            const data = JSON.parse(txt);
+            let list = null;
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+              // 分桶格式：{ "<站点名>": [ {name,grade,...}, ... ], "__legacy": [...] }
+              // 平板只取自己所属地点的桶（getMySite 在学习到 /site 后才有值）；
+              // 未学过任何站点（my 为空）时取 __legacy（历史无 site 老名单），避免把别地点学员混进本机。
+              const my = Storage.getMySite();
+              list = my ? data[my] : data.__legacy;
+            } else if (Array.isArray(data)) {
+              // 旧扁平数组兼容（过渡期云端可能尚未迁移完）：本机已有站点则只取本站点记录，
+              // 无站点则只取无 site 老数据（防止把别地点学员混进本机，勿回退）
+              const my = Storage.getMySite();
+              list = data.filter(s => {
+                if (!s || !s.name) return false;
+                if (!my) return !s.site;
+                return !s.site || String(s.site) === String(my);
+              });
+            }
             if (Array.isArray(list) && list.length) {
               Storage.mergeStudents(list);
-              console.log('云端同步学员:', list.length, '人');
+              console.log('云端同步学员:', list.length, '人（分桶按站点）');
               return true;
             }
           } catch (e) {}
@@ -9891,7 +9908,7 @@ if (this._apkVersion) {
       html += '<div class="login-restore-notice" style="background:#E8F5E9;color:#2E7D32;border:1px solid #A5D6A7;border-radius:10px;padding:10px 14px;margin:8px 16px;font-size:13px;text-align:center">✅ 已恢复 ' + restoredCount + ' 名学员的学习资料</div>';
     }
     if (!Storage.getMySite()) {
-      html += '<div class="login-site-notice" style="background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;border-radius:10px;padding:10px 14px;margin:8px 16px;font-size:13px;text-align:center">📡 未连接本地点电脑，仅显示本机历史学员<br><span style="font-size:12px">请确认电脑 IP 正确、并连接本地点电脑所在网络后登录，即可同步/看到本地点注册学员名单</span></div>';
+      html += '<div class="login-site-notice" style="background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;border-radius:10px;padding:10px 14px;margin:8px 16px;font-size:13px;text-align:center">📡 未连接本点电脑，仅显示本机历史学员<br><span style="font-size:12px">请确认电脑 IP 正确、并连接本地点电脑所在网络后登录，即可同步/看到本地点注册学员名单</span></div>';
     }
     html += '<div class="login-header">';
     html += '<div class="login-logo"><span class="logo-pj">PJ</span><span class="logo-sub">培基家园</span></div>';
@@ -16477,4 +16494,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260907-1736';
+window.__SERVER_VER = '20260907-1737';
