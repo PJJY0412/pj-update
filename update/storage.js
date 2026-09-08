@@ -281,7 +281,11 @@ const Storage = {
     const prev = this._studentId;
     this._studentId = null;
     const students = this.getStudents();
-    if (students.find(s => s.name === name)) { this._studentId = prev; return null; }
+    const my = this.getMySite() || '';
+    // 站点隔离：同名判定只拦"当前地点可见"记录（无 site 视为本地点），
+    // 否则其他地点遗留的同名学员让 addStudent 返回 null、而 findStudent 已按地点过滤
+    // → 注册学员登录报"本机建档失败，请重试"（勿回退）
+    if (students.find(s => s.name === name && (!s.site || s.site === my))) { this._studentId = prev; return null; }
     // 远端自动建档（其他平板已注册 → 本机重建）必须沿用远端原始注册时间，
     // 否则 8/31 学年滚动后本机算出的当前年级会差一级，回流改写电脑端学员库文件夹（勿回退）
     let created = new Date();
@@ -295,7 +299,7 @@ const Storage = {
       grade: grade || 1,
       createdAt: created.toISOString(),
       gradeStartYear: this._academicStartYear(created),
-      site: this.getMySite() || ''
+      site: my
     };
     students.push(student);
     this.save('students', students);
