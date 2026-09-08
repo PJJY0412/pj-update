@@ -15,7 +15,7 @@ $deletedStudentsFile = Join-Path $PSScriptRoot '已删学员.json'
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260906-2'
+$script:SelfVer = '20260908-2'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -510,23 +510,39 @@ function Sync-WrongAccumToCloud {
 }
 
 # ---------- 学员删除墓碑：持久化"已删学员"名单，防止离线平板上线后全量推送把已删学员再次复活 ----------
-# 返回已删学员墓碑名单 [{name, grade, at}]
+# 返回已删学员墓碑名单 [{name, grade, at}]（兼容历史畸形：双层包裹/顶层数组套数组，一律解包为扁平数组）
 function Get-DeletedStudents {
     if (-not (Test-Path -LiteralPath $deletedStudentsFile)) { return @() }
     try {
         $recs = Get-Content -LiteralPath $deletedStudentsFile -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($null -eq $recs) { return @() }
-        return @($recs)
+        $list = @($recs)
+        if ($list.Count -eq 1) {
+            $it = $list[0]
+            if ($it -is [System.Array]) {
+                $list = @($it)
+            } else {
+                $prop = @($it.PSObject.Properties | Where-Object { $_.Name -eq 'value' })
+                if ($prop.Count -eq 1 -and $null -ne $prop[0].Value) { $list = @($prop[0].Value) }
+            }
+        }
+        return @($list)
     } catch { return @() }
+}
+
+# 扁平数组序列化（逐条 ConvertTo-Json + 手工 join，彻底规避 PS5.1 ConvertTo-Json 数组基数歧义：单条去括号/多条双重包裹）
+function Get-TombJson($list) {
+    $parts = @($list) | ForEach-Object { ConvertTo-Json -InputObject $_ -Compress -Depth 4 }
+    return '[' + (@($parts) -join ',') + ']'
 }
 
 # 记录一次删除（防重复入块）
 function Add-DeletedStudent([string]$name, [string]$grade) {
     $nm = ([string]$name).Trim()
     if ($nm.Length -eq 0) { return }
-    $list = @(Get-DeletedStudents) | Where-Object { -not ([string]$_.name -eq $nm -and [string]$_.grade -eq [string]$grade) }
+    $list = @(@(Get-DeletedStudents) | Where-Object { -not ([string]$_.name -eq $nm -and [string]$_.grade -eq [string]$grade) })
     $list += [PSCustomObject]@{ name = $nm; grade = [string]$grade; at = (Get-Date).ToUniversalTime().ToString('o') }
-    [System.IO.File]::WriteAllText($deletedStudentsFile, (ConvertTo-Json -InputObject @($list) -Depth 4 -Compress), (New-Object System.Text.UTF8Encoding $false))
+    [System.IO.File]::WriteAllText($deletedStudentsFile, (Get-TombJson $list), (New-Object System.Text.UTF8Encoding $false))
     Log ("学员墓碑：已记录已删学员『{0}』（{1}）" -f $nm, [string]$grade)
 }
 
@@ -534,8 +550,8 @@ function Add-DeletedStudent([string]$name, [string]$grade) {
 function Clear-DeletedStudent([string]$name, [string]$grade) {
     $nm = ([string]$name).Trim()
     if ($nm.Length -eq 0) { return }
-    $list = @(Get-DeletedStudents) | Where-Object { -not ([string]$_.name -eq $nm -and [string]$_.grade -eq [string]$grade) }
-    [System.IO.File]::WriteAllText($deletedStudentsFile, (ConvertTo-Json -InputObject @($list) -Depth 4 -Compress), (New-Object System.Text.UTF8Encoding $false))
+    $list = @(@(Get-DeletedStudents) | Where-Object { -not ([string]$_.name -eq $nm -and [string]$_.grade -eq [string]$grade) })
+    [System.IO.File]::WriteAllText($deletedStudentsFile, (Get-TombJson $list), (New-Object System.Text.UTF8Encoding $false))
     Log ("学员墓碑：已为『{0}』（{1}）恢复注册资格" -f $nm, [string]$grade)
 }
 
@@ -543,6 +559,9 @@ function Clear-DeletedStudent([string]$name, [string]$grade) {
 function Remove-StudentData([string]$name, [string]$grade) {
     $nm = ([string]$name).Trim()
     if ($nm.Length -eq 0) { return }
+    # 墓碑先落盘：删除流程任何一步中断（同步 I/O 异常、请求断线、进程被杀），
+    # 该学员也已进"已删除学员.json"，POST/GET 的 dead 过滤持续挡住复活（勿回退）
+    Add-DeletedStudent $nm $grade
     $safe = $nm -replace '[\\/:*?"<>|]', '_'
     # 1) 学员库：所有年级下的同名档案
     $stDir = Join-Path $baseDir '学员库'
@@ -650,12 +669,9 @@ function Remove-StudentData([string]$name, [string]$grade) {
         }
     }
     Log ("学员删除：平板已删除学员『{0}』，电脑端资料已清理" -f $nm)
-    # 电脑本地学员库已清理 → 推送最新名单到云端，阻断"云端一同步又复活"
-    Sync-StudentsToCloud
-    # 错题本+日积月累已删本地文件 → 推送到云端，防止其他平板从云端拉回已删学员数据
-    try { Sync-WrongAccumToCloud } catch {}
-    # 记录永久墓碑：即使以后其他平板（离线中途上线）全量推送名单，也不能重建该学员档案
-    Add-DeletedStudent $nm $grade
+    # 云端名单/错题本+日积月累推送由 10 分钟周期任务（Sync-StudentsToCloud / Sync-WrongAccumToCloud）自动执行；
+    # 删除请求不再内联长云 I/O，避免请求处理被云连接等待阻塞导致客户端"连接被意外关闭"、
+    # 守护误判或异常中断时墓碑尚未写入。墓碑已在函数开头写入（勿回退）
 }
 
 function Log($msg) {
