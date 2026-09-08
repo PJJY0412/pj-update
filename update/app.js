@@ -1570,7 +1570,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     this._mathMem = null;
   },
 
-  // ❌ 错题重练
+  // ❌ 错题重练（试卷形式：整卷平铺，直接在卷面上作答，交卷自动判分）
   startMathWrongReview() {
     const sid = this.currentStudent ? this.currentStudent.id : '';
     const words = this._getMathDailyWords();
@@ -1588,66 +1588,171 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     });
     const all = wrongWords.concat(bank);
     if (!all.length) { alert('没有数学错题，去闯关挑战吧！'); this.renderMathDailyModes(); return; }
-    // 记录错因分析入口
-    this._mathWrongReview = { words: all, idx: 0, score: 0, reviewed: {} };
+    // 整卷构题：可计算算式→填结果；概念错题→在卷面点选定义
+    const items = [];
+    const seenEq = {};
+    all.forEach(w => {
+      const en = String(w && w.en || '').trim();
+      if (!en) return;
+      const eq = this._mathOpenEq(en);
+      if (eq) {
+        const key = this._mathExprCompact(eq);
+        if (seenEq[key]) return;
+        seenEq[key] = 1;
+        items.push({ en: en, cn: String(w && w.cn || '').trim(), eq: eq, concept: false, example: String(w && w.example || '') });
+      } else if (String(w && w.cn || '').trim()) {
+        items.push({ en: en, cn: String(w.cn).trim(), eq: null, concept: true, example: String(w && w.example || '') });
+      }
+    });
+    if (!items.length) { alert('没有可作答的数学错题，去闯关挑战吧！'); this.renderMathDailyModes(); return; }
+    this._mathWrongReview = { items: items, answers: {}, sel: {}, judged: false, score: 0 };
+    this.activeSessionId = Storage.startSession('mathWrongReview', 0, '每天必练·数学·错题重练', '', { subject: 'math', totalItems: items.length });
     this._renderMathWrongReview();
+  },
+  // 概念错题的卷面选择题选项（答案=本项 cn 定义，干扰=同卷其它概念 cn + 兜底）
+  _mathWrongConceptOpts(item, pool) {
+    const ans = String(item.cn || '').trim();
+    const opts = [ans];
+    const seen = {};
+    seen[ans] = 1;
+    (pool || []).forEach(x => {
+      if (opts.length >= 4) return;
+      if (x === item) return;
+      const o = String(x.cn || '').trim();
+      if (o && o !== ans && !seen[o]) { seen[o] = 1; opts.push(o); }
+    });
+    const fb = ['加法的意义：把两个数合并成一个数的运算', '减法的意义：已知两个数的和与其中一个加数，求另一个加数的运算', '乘法的意义：求几个相同加数的和的简便运算', '除法的意义：已知两个因数的积与其中一个因数，求另一个因数的运算', '长方形的特征：对边相等，四个角都是直角', '正方形的特征：四边相等，四个角都是直角'];
+    for (let i = 0; i < fb.length && opts.length < 4; i++) {
+      if (!seen[fb[i]]) { seen[fb[i]] = 1; opts.push(fb[i]); }
+    }
+    return this._shuffleArr(opts);
   },
   _renderMathWrongReview() {
     const st = this._mathWrongReview;
-    const w = st.words[st.idx];
-    const total = st.words.length;
+    const main = document.getElementById('main-content');
     let html = '<div class="math-container">';
-    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
-    html += '<h2 class="course-title">❌ 错题重练</h2>';
-    html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">第 ' + (st.idx + 1) + ' / ' + total + ' 题 · 已纠正 ' + Object.keys(st.reviewed).filter(k => st.reviewed[k]).length + ' 道</div>';
-    html += '<div class="math-card" style="text-align:center;padding:24px">';
-    html += '<div style="font-size:22px;font-weight:700;color:#E57373;margin-bottom:12px">' + this._h(this._mathDisp(w.en)) + '</div>';
-    html += '<div style="font-size:18px;color:#333;margin-bottom:16px">' + this._h(w.cn) + '</div>';
-    html += '<div style="background:#FFF3E0;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px;color:#E65100">💡 <strong>易错点：</strong>' + (w.example || '易混淆运算顺序/单位换算/进位退位') + '</div>';
-    html += '<div style="display:flex;flex-direction:column;gap:10px">';
-    const opts = this._mathGenOptions(w, this._mathWrongReview.words);
-    opts.forEach(function(o, i) {
-      html += '<button class="math-opt-btn" data-idx="' + i + '">' + o.label + '</button>';
+    html += '<button class="back-btn" onclick="App._mathWrongCleanup();App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<h2 class="course-title">❌ 错题重练 · 试卷</h2>';
+    html += '<div style="text-align:center;margin:6px 0;font-size:13px;color:var(--text-light)">共 ' + st.items.length + ' 题 · 直接在下方作答，交卷后自动判分，答对自动出清错题本</div>';
+    html += '<div style="padding:0 4px">';
+    st.items.forEach((it, i) => {
+      const a = st.answers[i];
+      const hint = it.example || (it.concept ? '回顾概念定义' : '易混淆运算顺序/单位换算/进位退位');
+      html += '<div class="math-card" style="padding:14px 16px;margin-bottom:10px">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between">';
+      if (!it.concept) {
+        const disp = this._h(this._mathExprDisp(it.eq)) + ' = ?';
+        const kept = (st.judged && a) ? this._h(String(a.val || '')) : '';
+        html += '<div style="flex:1;font-size:20px;font-weight:700;color:#0D47A1;letter-spacing:2px">' + (i + 1) + '. ' + disp + '</div>';
+        html += '<input type="number" id="mpw-in-' + i + '" class="fill-input" style="width:110px;font-size:22px;text-align:center" inputmode="decimal" placeholder="答案" value="' + kept + '"' + (st.judged ? ' disabled' : '') + '>';
+      } else {
+        html += '<div style="width:100%;font-size:20px;font-weight:700;color:#0D47A1;letter-spacing:1px">' + (i + 1) + '. 「' + this._h(it.en) + '」的含义是？</div>';
+      }
+      html += '</div>';
+      if (it.concept) {
+        const opts = this._mathWrongConceptOpts(it, st.items);
+        html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">';
+        opts.forEach(o => {
+          let cls = 'math-opt-btn';
+          if (st.judged) {
+            if (o === String(it.cn || '').trim()) cls += ' math-opt-correct';
+            else if (st.sel[i] === o) cls += ' math-opt-wrong';
+          } else if (st.sel[i] === o) {
+            cls += ' mpw-sel';
+          }
+          html += '<button class="' + cls + '" data-wi="' + i + '"' + (st.judged ? ' disabled' : '') + '>' + this._h(o) + '</button>';
+        });
+        html += '</div>';
+      }
+      if (a && a.correct) html += '<div style="font-size:14px;color:#2E7D32;margin-top:8px">✅ 正确</div>';
+      else if (a && a.correct === false) html += '<div style="font-size:14px;color:#C62828;margin-top:8px">❌ 正确答案 ' + this._h(it.concept ? String(it.cn) : String(it.eq.result)) + '</div>';
+      html += '<div style="font-size:12px;color:#B0855F;margin-top:4px">💡 ' + this._h(hint) + '</div>';
+      html += '</div>';
     });
     html += '</div>';
-    html += '<div id="math-q-fb" style="margin-top:14px;min-height:30px"></div>';
-    html += '</div></div>';
-    document.getElementById('main-content').innerHTML = html;
-    var self = this;
-    document.querySelectorAll('.math-opt-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        if (st.reviewed[st.idx]) return;
-        st.reviewed[st.idx] = true;
-        var idx = parseInt(btn.dataset.idx);
-        var correct = opts[idx].isCorrect;
-        if (correct) st.score++;
-        btn.classList.add(correct ? 'math-opt-correct' : 'math-opt-wrong');
-        if (!correct) {
-          opts.forEach(function(o, oi) { if (o.isCorrect) document.querySelectorAll('.math-opt-btn')[oi].classList.add('math-opt-correct'); });
-        }
-        var fb = document.getElementById('math-q-fb');
-        if (fb) fb.innerHTML = '<div style="font-size:16px;color:' + (correct ? '#2E7D32' : '#C62828') + '">' + (correct ? '✅ 掌握了！' : '❌ 复习：' + w.cn + ' —— ' + (w.example || '注意运算顺序/单位')) + '</div>';
-        setTimeout(function() {
-          if (st.idx < st.words.length - 1) { st.idx++; self._renderMathWrongReview(); }
-          else { self._mathWrongFinish(); }
-        }, 1500);
+    html += '<div style="text-align:center;margin-top:10px">';
+    if (!st.judged) html += '<button class="submit-btn" id="mpw-submit" style="width:100%">✔️ 交卷判分</button>';
+    else {
+      html += '<div style="font-size:20px;color:#0D47A1;margin:8px 0">答对 ' + st.score + ' / ' + st.items.length + ' 题</div>';
+      html += '<button class="continue-btn" id="mpw-done" style="width:100%">完成 · 结算成绩 ✓</button>';
+    }
+    html += '</div>';
+    html += '</div>';
+    main.innerHTML = html;
+
+    if (!st.judged) {
+      const self = this;
+      document.querySelectorAll('.math-opt-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const i = parseInt(btn.dataset.wi, 10);
+          const o = btn.textContent;
+          st.sel[i] = o;
+          document.querySelectorAll('.math-opt-btn').forEach(b => {
+            if (parseInt(b.dataset.wi, 10) === i) b.classList.toggle('mpw-sel', b.textContent === o);
+          });
+        });
       });
-    });
+      document.getElementById('mpw-submit').addEventListener('click', () => this._mathWrongJudge());
+    } else {
+      document.getElementById('mpw-done').addEventListener('click', () => this._mathWrongFinish());
+    }
+    this.updateTopBar();
   },
+  _mathWrongJudge() {
+    const st = this._mathWrongReview;
+    if (!st || st.judged) return;
+    let ok = 0;
+    st.items.forEach((it, i) => {
+      let val = '';
+      let correct = false;
+      if (!it.concept) {
+        const inp = document.getElementById('mpw-in-' + i);
+        val = inp ? String(inp.value || '').trim() : '';
+        const num = parseFloat(val);
+        correct = val !== '' && !isNaN(num) && Math.abs(num - it.eq.result) < 0.001;
+      } else {
+        val = String(st.sel[i] || '').trim();
+        correct = val !== '' && val === String(it.cn || '').trim();
+      }
+      if (correct) ok++;
+      st.answers[i] = { val: val, correct: correct };
+      if (correct) {
+        // 答对出清错题本（算式按原始/紧凑两种存法都清，概念按原词清）
+        Storage.removeWrongWord(it.en);
+        if (!it.concept) Storage.removeWrongWord(this._mathExprCompact(it.eq));
+      } else {
+        this.stopSpeaking();
+        Storage.addWrongWord(it.en, String(it.cn || '').trim() || (it.concept ? '' : this._mathExprZh(it.eq)), 0, '每天必练·数学·错题重练', 'math');
+      }
+    });
+    st.judged = true;
+    st.score = ok;
+    this._renderMathWrongReview();
+  },
+  _mathWrongCleanup() { this._mathWrongReview = null; this.stopSpeaking(); },
   _mathWrongFinish() {
     const st = this._mathWrongReview;
-    const correctCount = Object.keys(st.reviewed).filter(k => st.reviewed[k]).length;
-    const total = st.words.length;
-    const pct = total ? Math.round(st.score / total * 100) : 0;
+    const total = st ? st.items.length : 1;
+    const ok = st ? st.score : 0;
+    const pct = total ? Math.round(ok / total * 100) : 0;
     const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : 1;
+    if (this.activeSessionId) {
+      try {
+        Storage.endSession(this.activeSessionId, { correctCount: ok, wrongCount: total - ok, totalItems: total, accuracy: pct, stars: stars, xp: ok * 5 });
+        this.activeSessionId = null;
+        this._autoPushReport();
+      } catch (e) {}
+    }
     this._saveMathModeProgress('wrong', stars);
     this._mathWrongReview = null;
-    let html = '<div class="math-container"><div class="quiz-summary">';
-    html += '<div style="font-size:40px;margin-bottom:10px">' + '⭐'.repeat(stars) + '☆'.repeat(3 - stars) + '</div>';
-    html += '<div style="font-size:22px;font-weight:700;color:#E57373">纠正 ' + st.score + ' / ' + total + ' (' + pct + '%)</div>';
-    html += '<div style="font-size:16px;color:#888;margin-top:6px">' + (pct >= 90 ? '错题全搞定！' : pct >= 60 ? '大部分搞懂了，剩下再巩固' : '建议再练一遍') + '</div>';
-    html += '<button class="continue-btn" style="margin-top:20px" onclick="App.renderMathDailyModes()">返回菜单</button>';
-    html += '</div></div>';
+    let html = '<div class="math-container" style="text-align:center;padding:40px 20px">';
+    html += '<button class="back-btn" onclick="App.renderMathDailyModes()">← 返回数学作业</button>';
+    html += '<div style="font-size:52px">' + (pct >= 90 ? '🏆' : (pct >= 60 ? '👍' : '💪')) + '</div>';
+    html += '<h2 style="color:#E57373">错题重练完成！</h2>';
+    html += '<div style="font-size:20px;margin:16px 0">答对 ' + ok + ' / ' + total + ' 题 · ' + pct + '%</div>';
+    html += '<div style="font-size:16px;color:#888">' + (pct >= 90 ? '错题全搞定！' : pct >= 60 ? '大部分搞懂了，剩下再巩固' : '建议再练一遍') + '</div>';
+    html += '<div style="font-size:24px;letter-spacing:4px;margin-top:8px">' + '⭐'.repeat(stars) + '☆'.repeat(3 - stars) + '</div>';
+    html += '</div>';
     document.getElementById('main-content').innerHTML = html;
   },
   // 错题重练四选一选项（答案=w.cn，干扰=同池 cn；2026-08-28 重做闯关/小测时误删本函数，1717 重建，勿回退成 undefined）
@@ -2288,7 +2393,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
   // 解析 en 为纯算式：'数字 op 数字 = 数字' → {a,op,b,result}；否则 null（概念/公式词）
   _mathParseEn(en) {
-    const s = String(en || '').replace(/…….*$/, '').replace(/\s+/g, '');
+    const s = this._mathNorm(en);
     const m = /^(-?\d+(?:\.\d+)?)([+\-×÷xX*/])(-?\d+(?:\.\d+)?)=(-?\d+(?:\.\d+)?)$/.exec(s);
     if (m) {
       let op = m[2];
@@ -2308,7 +2413,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
   },
   // 宽松解析口算题：'数字 op 数字'、'数字 op 数字='、'数字 op 数字=数字/？'、混合运算链 'a op b op c...(=r|?)' 均接受（口算作业整卷 + 批阅补全算式用）
   _mathOpenEq(en, answer) {
-    const s = String(en || '').replace(/…….*$/, '').replace(/\s+/g, '');
+    const s = this._mathNorm(en);
     const eqIdx = s.indexOf('=');
     let expr = s, given = NaN;
     if (eqIdx >= 0) {
@@ -2329,9 +2434,18 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     if (simple) return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: result };
     return { a: tokens[0].v, op: tokens[1].s, b: tokens[2].v, result: result, chain: true, tokens: tokens };
   },
+  // 把算式串归一化全角数学字符（中小学老师手机/电脑输入法常见 ＋－×÷＝０-９．）为半角，保证各解析路径一致
+  _mathNorm(s) {
+    return String(s || '')
+      .replace(/[０-９]/g, function (d) { return String.fromCharCode(d.charCodeAt(0) - 0xFEE0); })
+      .replace(/＋/g, '+').replace(/－/g, '-')
+      .replace(/×/g, '*').replace(/÷/g, '/').replace(/＝/g, '=')
+      .replace(/．/g, '.')
+      .replace(/…….*$/, '').replace(/\s+/g, '');
+  },
   // 把算式串切成 tokens（数字/操作符/括号），支持混合运算链与括号 ()；非法字符/未闭合一律返回 null
   _mathTokenize(s) {
-    const str = String(s || '').replace(/…….*$/, '').replace(/\s+/g, '');
+    const str = this._mathNorm(s);
     if (!str) return null;
     const tokens = [];
     const n = str.length;
@@ -2860,7 +2974,7 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     if (!p.judged) {
       document.getElementById('math-paper-submit').addEventListener('click', () => this._mathPaperJudge());
     } else {
-      document.getElementById('math-paper-done').addEventListener('click', () => { this._mathPaperCleanup(); this._mathPaperFinish(); });
+      document.getElementById('math-paper-done').addEventListener('click', () => { this._mathPaperFinish(); this._mathPaperCleanup(); });
     }
     this.updateTopBar();
   },
@@ -15365,26 +15479,63 @@ _ttsCancel() {
       html += '<div class="empty-state"><div class="empty-icon">🎉</div>';
       html += '<h2>没有错题！</h2><p>太棒了，继续保持！</p>';
       html += '<button class="continue-btn" onclick="App.renderGrades()">去学习</button></div>';
-    } else {
-      html += `<p class="review-subtitle">共 <strong>${wrongWords.length}</strong> 个待复习错题</p>`;
-      html += '<div class="review-word-list">';
-      wrongWords.forEach(w => {
-        html += `<div class="review-word-card">
+      html += '</div>';
+      main.innerHTML = html;
+      return;
+    }
+
+    const subjKey = w => (w.subject === 'chinese' || w.subject === 'math') ? w.subject : 'english';
+    const SUBJ_NAME = { english: '英语', chinese: '语文', math: '数学' };
+    const grouped = { english: [], chinese: [], math: [] };
+    wrongWords.forEach(w => grouped[subjKey(w)].push(w));
+
+    html += `<p class="review-subtitle">共 <strong>${wrongWords.length}</strong> 个待复习错题</p>`;
+    let firstOpen = true;
+    ['english', 'chinese', 'math'].forEach(sk => {
+      const list = grouped[sk];
+      if (list.length === 0) return;
+      const isOpen = firstOpen; firstOpen = false;
+      html += '<div class="rev-subj-folder" style="margin-bottom:12px">';
+      html += '<div class="acc-day-head rev-subj-head" data-subj="' + sk + '" style="display:flex;align-items:center;justify-content:space-between;background:#DCEDC8;padding:8px 12px;cursor:pointer;user-select:none;border-radius:6px">';
+      html += '<span style="font-weight:700;font-size:15px">📁 ' + SUBJ_NAME[sk] + ' 错题（' + list.length + ' 题）</span>';
+      html += '<span class="rev-folder-arrow" style="font-size:12px;color:#555">' + (isOpen ? '▼' : '▶') + '</span>';
+      html += '</div>';
+      html += '<div class="acc-day-body rev-subj-body" data-subj="' + sk + '" style="display:' + (isOpen ? 'flex' : 'none') + ';flex-wrap:wrap;gap:10px;padding:8px 8px">';
+      list.forEach(w => {
+        html += `<div class="review-word-card" style="width:100%">
           <div class="review-word-en">${w.wordEn}</div>
           <div class="review-word-cn">${w.wordCn}</div>
           <div class="review-word-meta">
             <span class="rw-missed">答错 ${w.missedCount} 次</span>
-            <span class="rw-unit">${w.unitTitle}</span>
+            <span class="rw-unit">${w.unitTitle || ''}</span>
           </div>
         </div>`;
       });
+      html += `<button class="continue-btn rev-subj-start" data-subj="${sk}" style="margin:4px 0 2px">🔄 错题练习（${list.length}题）</button>`;
       html += '</div>';
-      html += `<button class="continue-btn" id="start-review-btn">🔄 开始错题练习 (${wrongWords.length}题)</button>`;
-      html += `<button class="review-clear-btn" id="clear-wrong-btn">🗑 清空错题本</button>`;
-    }
+      html += '</div>';
+    });
 
+    html += '<button class="continue-btn" id="start-review-btn" style="margin-top:4px">🔄 开始全部错题练习（' + wrongWords.length + '题）</button>';
+    html += '<button class="review-clear-btn" id="clear-wrong-btn">🗑 清空错题本</button>';
     html += '</div>';
     main.innerHTML = html;
+
+    document.querySelectorAll('.rev-subj-head').forEach(head => {
+      head.addEventListener('click', () => {
+        const sk = head.getAttribute('data-subj');
+        const arrow = head.querySelector('.rev-folder-arrow');
+        const body = document.querySelector('.rev-subj-body[data-subj="' + sk + '"]');
+        if (!body) return;
+        const collapsed = body.style.display === 'none';
+        body.style.display = collapsed ? 'flex' : 'none';
+        if (arrow) arrow.textContent = collapsed ? '▼' : '▶';
+      });
+    });
+
+    document.querySelectorAll('.rev-subj-start').forEach(btn => {
+      btn.addEventListener('click', () => this.startReviewExercise(btn.getAttribute('data-subj')));
+    });
 
     const startBtn = document.getElementById('start-review-btn');
     if (startBtn) {
@@ -15403,12 +15554,20 @@ _ttsCancel() {
   },
 
   reviewWords: [],
+  reviewSubject: '',
   reviewCorrectCount: 0,
   reviewTotal: 0,
   reviewIndex: 0,
 
-  startReviewExercise() {
-    const wrongWords = Storage.getWrongWords();
+  startReviewExercise(filterSubject) {
+    this.reviewSubject = filterSubject || '';
+    let wrongWords = Storage.getWrongWords();
+    if (filterSubject) {
+      wrongWords = wrongWords.filter(w => {
+        const s = (w.subject === 'chinese' || w.subject === 'math') ? w.subject : 'english';
+        return s === filterSubject;
+      });
+    }
     if (wrongWords.length === 0) { this.renderReviewWords(); return; }
 
     this.reviewWords = wrongWords.slice();
@@ -15419,7 +15578,7 @@ _ttsCancel() {
     this.hearts = 5;
 
     this.activeSessionId = Storage.startSession('review', 0, '错题复习', '', {
-      subject: this.currentSubject,
+      subject: filterSubject || this.currentSubject,
       totalItems: this.reviewTotal
     });
 
@@ -15610,7 +15769,7 @@ _ttsCancel() {
       this.hearts = Math.max(0, this.hearts - 1);
       document.getElementById('heart-count').textContent = this.hearts;
       const existing = Storage.getWrongWords().find(w => w.wordEn === exercise.word.en);
-      Storage.addWrongWord(exercise.word.en, exercise.word.cn, existing ? existing.unitId : 0, existing ? existing.unitTitle : '');
+      Storage.addWrongWord(exercise.word.en, exercise.word.cn, existing ? existing.unitId : 0, existing ? existing.unitTitle : '', existing ? existing.subject : this.reviewSubject);
       this.showFeedback(false, exercise);
       setTimeout(() => {
         if (this.hearts <= 0) {
@@ -16580,4 +16739,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260907-1738';
+window.__SERVER_VER = '20260908-1739';
