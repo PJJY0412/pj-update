@@ -12,10 +12,18 @@ $answerFile = Join-Path $PSScriptRoot '答案缓存.json'
 $reportFile = Join-Path $PSScriptRoot '上报缓存.json'
 $deletedStudentsFile = Join-Path $PSScriptRoot '已删学员.json'
 
+# ---------- 局域网本地 TTS（内嵌 Python + edge-tts，供平板 /tts 合成语音） ----------
+# 曲目：tts-py.zip 随发布进 更新\，首次 /tts 时自动解压到 工具\tts-py\（复用云端 files.'tts-py' 下载兜底）
+$ttsCacheDir = Join-Path $PSScriptRoot 'tts-cache'
+$ttsPyZip = Join-Path $updDir 'tts-py.zip'
+$ttsPyDir = Join-Path $PSScriptRoot 'tts-py'
+$ttsRunPy = Join-Path $ttsPyDir 'tts_run.py'
+$ttsMaxCache = 80MB
+
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260908-2'
+$script:SelfVer = '20260909-2'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -1272,6 +1280,115 @@ function Update-SingleCloudFile($target, $urlList, $expHash, $TimeoutSec = 300) 
     return $false
 }
 
+# ---------- 局域网本地 TTS：运行库解压/校验、合成、缓存清理 ----------
+function Ensure-TtsRuntime {
+    # 返回 python.exe 路径；未就绪返回 $null。多请求并发用 lock 文件串行化解压。
+    $exe = Join-Path $ttsPyDir 'python.exe'
+    if (Test-Path $exe) { return $exe }
+    $lock = Join-Path $PSScriptRoot 'tts-runtime.lock'
+    $gotLock = $false
+    try {
+        $fs = [System.IO.File]::Open($lock, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $fs.Close(); $gotLock = $true
+    } catch {}
+    if (-not $gotLock) {
+        for ($i = 0; $i -lt 60; $i++) { Start-Sleep -Milliseconds 500; if (Test-Path $exe) { return $exe } }
+        return $null
+    }
+    try {
+        if (Test-Path $exe) { return $exe }
+        if (-not (Test-Path $ttsPyZip)) {
+            try {
+                $v = Get-CloudUpdMeta
+                $meta = $null
+                try { $meta = $v.files.'tts-py' } catch {}
+                if ($null -ne $meta -and $meta.url) {
+                    if (Update-SingleCloudFile $ttsPyZip @($meta.url) ([string]$meta.hash) 600) { Log '局域网TTS：已从云端下载 tts-py.zip' }
+                }
+            } catch { Log ("局域网TTS：下载运行库失败 {0}" -f $_.Exception.Message) }
+        }
+        if (-not (Test-Path $ttsPyZip)) { Log '局域网TTS：缺少 tts-py.zip，运行库不可用'; return $null }
+        $tmp = Join-Path $PSScriptRoot ('tts-py-tmp_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        Expand-Archive -Path $ttsPyZip -DestinationPath $tmp -Force
+        $sub = Join-Path $tmp 'tts-py'
+        $ne = Join-Path $sub 'python.exe'
+        if (-not (Test-Path $ne)) { Log '局域网TTS：压缩包结构异常'; return $null }
+        if (Test-Path $ttsPyDir) { Remove-Item $ttsPyDir -Recurse -Force -ErrorAction SilentlyContinue }
+        Move-Item $sub $ttsPyDir
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Log '局域网TTS：内嵌 Python + edge-tts 运行库就绪'
+        return $exe
+    } catch {
+        Log ("局域网TTS：运行库初始化失败 {0}" -f $_.Exception.Message)
+        return $null
+    } finally {
+        if ($gotLock) { try { Remove-Item $lock -Force } catch {} }
+    }
+}
+
+function Trim-TtsCache {
+    # 按文件修改时间清理，超过 $ttsMaxCache 时删最旧的直到低于阈值
+    try {
+        if (-not (Test-Path $ttsCacheDir)) { return }
+        $total = 0; $files = @()
+        Get-ChildItem $ttsCacheDir -File -Filter '*.mp3' -ErrorAction SilentlyContinue | ForEach-Object {
+            $total += $_.Length; $files += $_
+        }
+        if ($total -le $ttsMaxCache) { return }
+        $files = $files | Sort-Object -Property LastWriteTime
+        foreach ($f in $files) {
+            if ($total -le $ttsMaxCache) { break }
+            try { $total -= $f.Length; Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    } catch {}
+}
+
+function New-TtsAudio($text, $zh) {
+    # 合成 $text 为 MP3 存入缓存；返回 @{ok;id;durS;err}。文本→id 用 24 位小写 hex（URL 白名单型）。
+    try {
+        $exe = Ensure-TtsRuntime
+        if (-not $exe) { return @{ ok = $false; err = 'no-runtime' } }
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $tag = 'en'; if ($zh) { $tag = 'zh' }
+        $id = ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text + '|' + $tag)))).Replace('-', '').ToLower().Substring(0, 24)
+        $sha.Dispose()
+        $f = Join-Path $ttsCacheDir ($id + '.mp3')
+        if (Test-Path $f) {
+            $len = (Get-Item $f).Length
+            return @{ ok = $true; id = $id; durS = [Math]::Round($len * 8 / 48000.0, 2); err = '' }
+        }
+        if (-not (Test-Path $ttsCacheDir)) { New-Item -ItemType Directory -Path $ttsCacheDir -Force | Out-Null }
+        $gen = Join-Path $ttsCacheDir ($id + '.gen.mp3')
+        $outLog = Join-Path $ttsCacheDir ($id + '.o.log')
+        $errLog = Join-Path $ttsCacheDir ($id + '.e.log')
+        if (Test-Path $gen) { Remove-Item $gen -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $outLog) { Remove-Item $outLog -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $errLog) { Remove-Item $errLog -Force -ErrorAction SilentlyContinue }
+        # 注意：RedirectStandardOutput 与 RedirectStandardError 不能指向同一文件（Start-Process 会抛错），必须两个日志
+        # 第一个参数必须是 tts_run.py 脚本路径（python.exe 会把紧跟其后的参数当脚本读，缺省会报 unknown option --text）
+        $argStr = '"{0}" --text "{1}" --out "{2}" --rate=-10%{3}' -f $ttsRunPy, ($text -replace '"', '\"'), $gen, ($(if ($zh) { '' } else { ' --en 1' }))
+        $p = Start-Process -FilePath $exe -ArgumentList $argStr -PassThru -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+        $done = $p.WaitForExit(25000)
+        if (-not $done) { try { $p.Kill() } catch {}; return @{ ok = $false; err = 'tts-timeout' } }
+        if (-not (Test-Path $gen)) {
+            # 注意：$p.ExitCode 在 PS 5.1 下可能为 $null（句柄未刷新），故以产物文件是否存在为权威判据，勿用 ExitCode 硬判失败
+            $msg = ''
+            if (Test-Path $errLog) { $msg = ([System.IO.File]::ReadAllText($errLog) -replace '\s+', ' ').Trim() }
+            if (-not $msg -and (Test-Path $outLog)) { $msg = ([System.IO.File]::ReadAllText($outLog) -replace '\s+', ' ').Trim() }
+            if (-not $msg) { $msg = 'edge-fail' }
+            return @{ ok = $false; err = $msg }
+        }
+        $len = (Get-Item $gen).Length
+        if ($len -lt 1024) { Remove-Item $gen -Force -ErrorAction SilentlyContinue; return @{ ok = $false; err = 'tts-empty' } }
+        Move-Item $gen $f -Force
+        Trim-TtsCache
+        return @{ ok = $true; id = $id; durS = [Math]::Round($len * 8 / 48000.0, 2); err = '' }
+    } catch {
+        return @{ ok = $false; err = ([string]$_.Exception.Message) }
+    }
+}
+
 function Sync-CloudUpdateDir {
     # 开发机保护：存在 no-cloud-sync.dev 标记时跳过云端同步（防止云端旧版覆盖本地未发布改动）
     if (Test-Path (Join-Path $PSScriptRoot 'no-cloud-sync.dev')) { return }
@@ -1872,6 +1989,45 @@ function Handle-Http {
                 $out += [PSCustomObject]@{ name = $s.name; grade = $s.grade; site = $siteName; hw = $hwObj }
             }
             Send-Response $stream '200 OK' 'application/json; charset=utf-8' ($out | ConvertTo-Json -Compress -Depth 6)
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/tts-check') {
+            # 运行库就绪性探测 → {ok, ready}，未就绪稍等重试（解压约需数秒）
+            $ready = $false
+            for ($i = 0; $i -lt 16; $i++) {
+                if (Test-Path (Join-Path $ttsPyDir 'python.exe')) { $ready = $true; break }
+                Start-Sleep -Milliseconds 300
+            }
+            Send-Response $stream '200 OK' 'application/json' (@{ ok = $true; ready = $ready } | ConvertTo-Json -Compress)
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/tts') {
+            # 局域网本地 TTS：把 $text 合成为 MP3（文本→url 命中缓存则秒回），返回 url 供平板在线播放
+            $text = ''
+            $zh = $false
+            if ($query -match '(?:^|&)text=([^&]*)') { $text = [System.Uri]::UnescapeDataString($Matches[1]) }
+            if ($query -match '(?:^|&)zh=([^&]*)') { $zh = ($Matches[1] -eq '1') }
+            if (-not $text -or $text.Length -gt 300) {
+                Send-Response $stream '200 OK' 'application/json' '{"ok":false,"err":"bad-text"}'
+            } else {
+                $r = New-TtsAudio $text $zh
+                if ($r.ok) {
+                    $j = @{ ok = $true; url = ('/tts-audio?id=' + $r.id); durS = $r.durS } | ConvertTo-Json -Compress
+                    Send-Response $stream '200 OK' 'application/json; charset=utf-8' $j
+                } else {
+                    $j = @{ ok = $false; err = ([string]$r.err) } | ConvertTo-Json -Compress
+                    Send-Response $stream '200 OK' 'application/json; charset=utf-8' $j
+                }
+            }
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/tts-audio') {
+            $id = ''
+            if ($query -match '(?:^|&)id=([^&]*)') { $id = $Matches[1] }
+            $f = ''
+            if ($id -and $id -match '^[a-f0-9]{24}$') { $f = Join-Path $ttsCacheDir ($id + '.mp3') }
+            if ($f -and (Test-Path $f)) {
+                Send-FileResponse $stream $f 'audio/mpeg'
+            } else {
+                Send-Response $stream '200 OK' 'application/json' '{"ok":false,"err":"not-found"}'
+            }
         }
         elseif ($method -eq 'GET' -and $pathOnly -eq '/site') {
             # 下发本机地点标识：平板自由流动时，连到哪台电脑就归属哪个地点，平板据此只读本地点注册学员
@@ -3208,6 +3364,11 @@ $timer.add_Tick({
         try { Sync-WrongAccumToCloud } catch { Log ("错题/积累云端存档异常: {0}" -f $_.Exception.Message) }
         # 周期推送本地点学员名单上云（新注册自动上云 + 按地点合并隔离各点学员，勿回退为整体覆盖）
         try { Sync-StudentsToCloud } catch { Log ("学员名单云端同步异常: {0}" -f $_.Exception.Message) }
+        # 局域网TTS运行库预热：首个同步周期解压内嵌 Python（数秒），之后 /tts 首合成即可 <2s；运行库损坏下个周期自愈重解压
+        try {
+            $py = Ensure-TtsRuntime
+            if (-not $py) { Log '局域网TTS：运行库未就绪（缺 tts-py.zip，下个周期重试）' }
+        } catch { Log ("局域网TTS预热异常: {0}" -f $_.Exception.Message) }
         $script:nextCloudSync = (Get-Date).AddMinutes(10)
     }
     if ((Get-Date) -ge $script:nextGraded) {
