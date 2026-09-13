@@ -23,7 +23,7 @@ $ttsMaxCache = 80MB
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260909-2'
+$script:SelfVer = '20260913-2'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -155,6 +155,41 @@ function Get-LocalSite {
     if (-not $site) { $site = $env:COMPUTERNAME }
     $script:siteId = $site
     return $site
+}
+
+# 站点名远程修改共享密钥：默认内置，可用 工具\站点管理密钥.txt 首行覆盖（随 工具\ 文件夹部署）。
+# 开发电脑通过 receiver /set-site 远程修改公司电脑的站点名时需携带此密钥。
+$script:SiteSetKey = 'pj-xfjd-hjxx-2026'
+$SiteSetKeyFile = Join-Path $PSScriptRoot '站点管理密钥.txt'
+if (Test-Path -LiteralPath $SiteSetKeyFile) {
+    try {
+        $k = ((Get-Content -LiteralPath $SiteSetKeyFile -Raw) | Out-String).Trim()
+        if ($k) { $script:SiteSetKey = $k }
+    } catch {}
+}
+
+function Test-SiteSetKey($key) {
+    if ([string]::IsNullOrEmpty($key)) { return $false }
+    return ([string]$key).Trim() -eq $script:SiteSetKey
+}
+
+# 远程写入本机地点名：写 工具\本机地点.txt（首行注释 + 站点名），并重置 siteId 缓存立即生效。
+# 返回 {ok,site} 或 {ok:false,err}。
+function Set-LocalSite([string]$site) {
+    $site = [string]$site
+    $site = $site.Trim()
+    if (-not $site) { return @{ ok = $false; err = '站点名不能为空' } }
+    if ($site.Length -gt 40) { return @{ ok = $false; err = '站点名过长' } }
+    if ($site.StartsWith('#')) { return @{ ok = $false; err = '站点名不能以 # 开头' } }
+    if ($site -match '[\\/:*?"<>|\r\n]') { return @{ ok = $false; err = '站点名含非法字符' } }
+    try {
+        $content = '# 本地点标识（可由开发电脑 /set-site 远程修改，勿手改手删）' + "`r`n" + $site + "`r`n"
+        [System.IO.File]::WriteAllText((Join-Path $PSScriptRoot '本机地点.txt'), $content, (New-Object System.Text.UTF8Encoding $true))
+        $script:siteId = $site
+        return @{ ok = $true; site = $site }
+    } catch {
+        return @{ ok = $false; err = ('写入失败: ' + $_.Exception.Message) }
+    }
 }
 
 # 与 app.js _splitManualMath 同等待的数学手动项拆分：
@@ -1422,6 +1457,29 @@ function Sync-CloudUpdateDir {
             }
         }
     }
+    # 站点管理密钥云端同步：/set-site 校验密钥（工具\站点管理密钥.txt）由开发机统一维护并随发布上云，
+    # 此处拉取落位并即时刷新内存密钥——公司电脑改密钥免人工换文件。短键 site-set-key 对应云端 site-set-key.txt。
+    $kMeta = $null
+    try { $kMeta = $v.files.'site-set-key' } catch {}
+    if ($null -ne $kMeta -and -not [string]::IsNullOrEmpty([string]$kMeta.hash)) {
+        $kUpd = Join-Path $updDir 'site-set-key.txt'
+        $kDst = Join-Path $PSScriptRoot '站点管理密钥.txt'
+        $curKH = if (Test-Path -LiteralPath $kDst) { (Get-UpdFileInfo $kDst).hash } else { '' }
+        if (-not $curKH -or $curKH.ToLower() -ne ([string]$kMeta.hash).ToLower()) {
+            Log ("云端同步：发现新版站点管理密钥（{0}），下载中..." -f $kMeta.version)
+            if (Update-SingleCloudFile $kUpd @([string]$kMeta.url) ([string]$kMeta.hash)) {
+                Copy-Item $kUpd $kDst -Force
+                try {
+                    $k = ((Get-Content -LiteralPath $kDst -Raw) | Out-String).Trim()
+                    if (-not [string]::IsNullOrEmpty($k)) { $script:SiteSetKey = $k }
+                } catch {}
+                Log ("云端同步：站点管理密钥已更新为 {0} 并即时生效" -f $kMeta.version)
+                $upd++
+            } else {
+                Log '云端同步：站点管理密钥下载/校验失败，保留现有密钥'
+            }
+        }
+    }
     if ($null -ne $v.apk -and -not [string]::IsNullOrEmpty($v.apk.hash)) {
         $apkPath = Join-Path $updDir '培基智多星学习系统.apk'
         $cur = if (Test-Path $apkPath) { (Get-FileHash $apkPath -Algorithm SHA256).Hash } else { '' }
@@ -2032,6 +2090,31 @@ function Handle-Http {
         elseif ($method -eq 'GET' -and $pathOnly -eq '/site') {
             # 下发本机地点标识：平板自由流动时，连到哪台电脑就归属哪个地点，平板据此只读本地点注册学员
             Send-Response $stream '200 OK' 'application/json; charset=utf-8' (@{ site = Get-LocalSite } | ConvertTo-Json -Compress)
+        }
+        elseif ($method -eq 'POST' -and $pathOnly -eq '/set-site') {
+            # 远程修改本机地点名：开发电脑 POST {site,key} → 校验共享密钥 → 写 本机地点.txt → 立即生效
+            $body = Read-Body $stream $contentLength
+            $json = $null
+            try { $json = $body | ConvertFrom-Json } catch {}
+            $setSite = ''
+            $setKey = ''
+            if ($null -ne $json) {
+                $setSite = [string]$json.site
+                $setKey = [string]$json.key
+            }
+            if (-not (Test-SiteSetKey $setKey)) {
+                Log ("/set-site 密钥校验失败（来自 {0}）" -f $clientIp)
+                Send-Response $stream '403 Forbidden' 'application/json; charset=utf-8' '{"ok":false,"err":"key invalid"}'
+            } else {
+                $resS = Set-LocalSite $setSite
+                if ($resS.ok) {
+                    Log ("/set-site 站点名已远程修改为 [{0}]（来自 {1}）" -f $resS.site, $clientIp)
+                    Send-Response $stream '200 OK' 'application/json; charset=utf-8' (@{ ok = $true; site = $resS.site } | ConvertTo-Json -Compress)
+                } else {
+                    Log ("/set-site 修改失败 {0}（来自 {1}）" -f $resS.err, $clientIp)
+                    Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' (@{ ok = $false; err = $resS.err } | ConvertTo-Json -Compress)
+                }
+            }
         }
         elseif ($method -eq 'GET' -and $pathOnly -eq '/students/deleted') {
             # 下发删除墓碑名单：离线平板上线后拉取此列表，把电脑端已删除的学员从本地一并删除（防复活）
