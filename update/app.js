@@ -15189,6 +15189,13 @@ _ttsCancel() {
       } catch (e) {}
       lines.push('LAN主机: ' + (self._getSavedHost() || '(未设置)'));
       try {
+        const allStu = Storage.getStudents() || [];
+        const my = Storage.getMySite();
+        const siteMap = {};
+        allStu.forEach(s => { const sk = s.site || '(无site)'; siteMap[sk] = (siteMap[sk] || 0) + 1; });
+        lines.push('本机地点: ' + (my || '(空)') + ' ｜ 本点可见 ' + Storage.getSiteStudents().length + ' / 全部 ' + allStu.length + ' 人 ｜ site分布: ' + Object.keys(siteMap).map(k => k + '×' + siteMap[k]).join(', '));
+      } catch (e) {}
+      try {
         const lg = JSON.parse(localStorage.getItem('pjyx_tasklog') || '[]') || [];
         lines.push('作业接收日志(' + lg.length + '): ' + (lg.length ? lg.slice(-3).join(' ‖ ') : '(无)'));
       } catch (e) {}
@@ -16896,4 +16903,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260913-1744';
+window.__SERVER_VER = '20260913-1745';
