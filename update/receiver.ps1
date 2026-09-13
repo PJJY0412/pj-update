@@ -23,7 +23,7 @@ $ttsMaxCache = 80MB
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260913-2'
+$script:SelfVer = '20260913-3'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -190,6 +190,124 @@ function Set-LocalSite([string]$site) {
     } catch {
         return @{ ok = $false; err = ('写入失败: ' + $_.Exception.Message) }
     }
+}
+
+# ---------- 学员库 site 批量改名（供 /rename-site 远程一键迁移站点，逻辑与 工具\改学员site.ps1 一致） ----------
+# 只改 site==oldSite 的学员，其余不动（防误改他点学员）。返回 @{found,changed,skipped,logLines}
+function Rename-StudentsSite([string]$oldSite, [string]$newSite) {
+    $stDir = Join-Path $baseDir '学员库'
+    $found = 0; $changed = 0; $skipped = 0
+    $logLines = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path $stDir) {
+        Get-ChildItem $stDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $gradeDir = $_.Name
+            Get-ChildItem $_.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $pf = Join-Path $_.FullName 'profile.json'
+                if (-not (Test-Path $pf)) { $skipped++; return }
+                $found++
+                try { $j = Get-Content $pf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $skipped++; return }
+                $cur = $null
+                try { $cur = [string]$j.site } catch {}
+                if ([string]::IsNullOrEmpty($cur)) { $skipped++; return }
+                if ($cur -ne $oldSite) { $skipped++; return }
+                $j.site = $newSite
+                [System.IO.File]::WriteAllText($pf, (ConvertTo-Json -InputObject $j -Depth 6), (New-Object System.Text.UTF8Encoding $true))
+                $changed++
+                $logLines.Add(("改了：{0}（site: {1} → {2}）" -f ($gradeDir + '\' + (Split-Path $_.FullName -Leaf)), $cur, $newSite))
+            }
+        }
+    }
+    return @{ found = $found; changed = $changed; skipped = $skipped; logLines = $logLines }
+}
+
+# ---------- 云端站点改名迁移：把云端 students.json 分桶中的旧站点桶并入新站点桶（记录 site 改新名），删除旧桶 ----------
+# 兼容三态：新分桶对象 / 旧扁平数组（自动迁移为分桶）/ 畸形包裹 {value:[...]}。返回是否写回成功。
+function Migrate-CloudSiteBucket([string]$oldSite, [string]$newSite) {
+    if ([string]::IsNullOrEmpty($oldSite) -or [string]::IsNullOrEmpty($newSite)) { return $false }
+    if ($oldSite -eq $newSite) { return $true }
+    try {
+        $tf = Join-Path $env:USERPROFILE '.pj_update_token'
+        if (-not (Test-Path $tf)) { return $false }
+        $token = (Get-Content $tf -Raw -Encoding UTF8).Trim()
+        if (-not $token) { return $false }
+        $repo = 'PJJY0412/pj-update'
+        $api = "https://api.github.com/repos/$repo/contents/update/students.json"
+        $h = @{ Authorization = "token $token"; 'User-Agent' = 'pj-receiver'; Accept = 'application/vnd.github+json' }
+        $done = $false
+        for ($attempt = 0; $attempt -lt 3 -and -not $done; $attempt++) {
+            $sha = ''
+            try {
+                $existing = Invoke-RestMethod -Uri $api -Headers $h -Method Get -TimeoutSec 30
+                if ($existing.sha) { $sha = [string]$existing.sha }
+                $cloudObj = @{}
+                $isFlat = $false
+                if ($existing.content) {
+                    $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$existing.content))
+                    $cloudRaw = ConvertFrom-Json $decoded
+                    if ($cloudRaw -is [PSCustomObject] -and -not $cloudRaw.PSObject.Properties['name'] -and $cloudRaw.PSObject.Properties['value']) { $cloudRaw = $cloudRaw.value }
+                    if ($cloudRaw -is [System.Array]) {
+                        $isFlat = $true
+                        $tmp = @{}
+                        foreach ($c in @($cloudRaw)) {
+                            if ($null -eq $c -or [string]::IsNullOrEmpty([string]$c.name)) { continue }
+                            $cs = ''
+                            try { $cs = [string]$c.site } catch {}
+                            $bk = if ([string]::IsNullOrEmpty($cs)) { '__legacy' } else { $cs }
+                            if (-not $tmp.ContainsKey($bk)) { $tmp[$bk] = [System.Collections.Generic.List[object]]::new() }
+                            $tmp[$bk].Add($c)
+                        }
+                        foreach ($k in $tmp.Keys) { $cloudObj[$k] = @($tmp[$k]) }
+                    } elseif ($cloudRaw -is [PSCustomObject]) {
+                        foreach ($p in $cloudRaw.PSObject.Properties) {
+                            if ($p.Name -eq 'name' -or $p.Name -eq 'value' -or $p.Name -eq 'sha') { continue }
+                            if ($p.Value -is [System.Array] -or $p.Value -is [System.Collections.IList]) { $cloudObj[$p.Name] = @($p.Value) }
+                        }
+                    }
+                }
+                # 合并旧桶到新桶（记录 site 改新名，按 name 去重），删除旧桶
+                $merged = [System.Collections.Generic.List[object]]::new()
+                if ($cloudObj.ContainsKey($newSite)) {
+                    foreach ($s in @($cloudObj[$newSite])) { $merged.Add($s) }
+                }
+                $oldArr = @()
+                if ($cloudObj.ContainsKey($oldSite)) {
+                    $oldArr = @($cloudObj[$oldSite])
+                    $cloudObj.Remove($oldSite)
+                }
+                $have = @{}
+                foreach ($s in @($merged)) { try { $have[[string]$s.name] = $true } catch {} }
+                foreach ($s in $oldArr) {
+                    if ($null -eq $s -or [string]::IsNullOrEmpty([string]$s.name)) { continue }
+                    if ($have.ContainsKey([string]$s.name)) { continue }
+                    try { $s.site = $newSite } catch {}
+                    $have[[string]$s.name] = $true
+                    $merged.Add($s)
+                }
+                $cloudObj[$newSite] = @($merged)
+                if ($isFlat) {
+                    $flat = @()
+                    foreach ($k in $cloudObj.Keys) { foreach ($s in @($cloudObj[$k])) { $flat += $s } }
+                    $finalJson = $flat | ConvertTo-Json -Compress -Depth 6
+                } else {
+                    $sortedObj = [ordered]@{}
+                    foreach ($bn in ($cloudObj.Keys | Sort-Object)) {
+                        $sortedObj[$bn] = @(@($cloudObj[$bn]) | Sort-Object @{ Expression = { [string]$_.name }; Ascending = $true })
+                    }
+                    $finalJson = $sortedObj | ConvertTo-Json -Compress -Depth 6
+                }
+                $contentB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($finalJson))
+                $body = @{ message = "rename site: $oldSite -> $newSite"; content = $contentB64; branch = 'master' }
+                if ($sha) { $body.sha = $sha }
+                try {
+                    $null = Invoke-RestMethod -Uri $api -Headers $h -Method Put -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 60
+                    $done = $true
+                } catch {
+                    if ($attempt -lt 2) { Start-Sleep -Milliseconds 600 }
+                }
+            } catch { return $false }
+        }
+        return $done
+    } catch { return $false }
 }
 
 # 与 app.js _splitManualMath 同等待的数学手动项拆分：
@@ -2090,6 +2208,49 @@ function Handle-Http {
                 } else {
                     Log ("/set-site 修改失败 {0}（来自 {1}）" -f $resS.err, $clientIp)
                     Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' (@{ ok = $false; err = $resS.err } | ConvertTo-Json -Compress)
+                }
+            }
+        }
+        elseif ($method -eq 'POST' -and $pathOnly -eq '/rename-site') {
+            # 远程一键"改学员站点"：改本机地点名 + 学员库 profile.site 批量改名 + 云端分桶迁移（旧桶并入新桶）。
+            # 开发电脑 POST {site,key}（key=共享密钥）。仅需传新站点名；旧站点名取当前 Get-LocalSite。
+            $body = Read-Body $stream $contentLength
+            $json = $null
+            try { $json = $body | ConvertFrom-Json } catch {}
+            $rSite = ''
+            $rKey = ''
+            if ($null -ne $json) {
+                $rSite = [string]$json.site
+                $rKey = [string]$json.key
+            }
+            if (-not (Test-SiteSetKey $rKey)) {
+                Log ("/rename-site 密钥校验失败（来自 {0}）" -f $clientIp)
+                Send-Response $stream '403 Forbidden' 'application/json; charset=utf-8' '{"ok":false,"err":"key invalid"}'
+            } elseif ([string]::IsNullOrWhiteSpace($rSite)) {
+                Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' '{"ok":false,"err":"新站点名不能为空"}'
+            } elseif ($rSite -match '[\\/:*?"<>|\r\n]') {
+                Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' '{"ok":false,"err":"站点名含非法字符"}'
+            } else {
+                $oldSite = Get-LocalSite
+                $rSite = $rSite.Trim()
+                if ($oldSite -eq $rSite) {
+                    Log ("/rename-site 站点名相同未变更 [{0}]（来自 {1}）" -f $oldSite, $clientIp)
+                    Send-Response $stream '200 OK' 'application/json; charset=utf-8' (@{ ok = $true; site = $rSite; old = $oldSite; changed = 0; skipped = 0; message = '新旧站点名相同，无需变更' } | ConvertTo-Json -Compress)
+                } else {
+                    # 1) 学员库批量改名（site==旧名 → 新名，防误改他点）
+                    $rs = Rename-StudentsSite $oldSite $rSite
+                    # 2) 本机地点名
+                    $resS = Set-LocalSite $rSite
+                    if (-not $resS.ok) {
+                        Log ("/rename-site 本机地点写入失败：{0}（来自 {1}）" -f $resS.err, $clientIp)
+                        Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' (@{ ok = $false; err = $resS.err } | ConvertTo-Json -Compress)
+                    } else {
+                        # 3) 云端分桶迁移（尽力而为，失败不影响本地已生效）
+                        $cloud = $false
+                        try { $cloud = (Migrate-CloudSiteBucket $oldSite $rSite) } catch { $cloud = $false }
+                        Log ("/rename-site 站点 [{0}] 更名为 [{1}]，学员 site 改 {2} 个/扫 {3}/跳 {4}，云端迁移={5}（来自 {6}）" -f $oldSite, $rSite, $rs.changed, $rs.found, $rs.skipped, $cloud, $clientIp)
+                        Send-Response $stream '200 OK' 'application/json; charset=utf-8' (@{ ok = $true; site = $rSite; old = $oldSite; changed = $rs.changed; found = $rs.found; skipped = $rs.skipped; cloud = $cloud } | ConvertTo-Json -Compress)
+                    }
                 }
             }
         }
