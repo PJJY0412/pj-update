@@ -1457,29 +1457,6 @@ function Sync-CloudUpdateDir {
             }
         }
     }
-    # 站点管理密钥云端同步：/set-site 校验密钥（工具\站点管理密钥.txt）由开发机统一维护并随发布上云，
-    # 此处拉取落位并即时刷新内存密钥——公司电脑改密钥免人工换文件。短键 site-set-key 对应云端 site-set-key.txt。
-    $kMeta = $null
-    try { $kMeta = $v.files.'site-set-key' } catch {}
-    if ($null -ne $kMeta -and -not [string]::IsNullOrEmpty([string]$kMeta.hash)) {
-        $kUpd = Join-Path $updDir 'site-set-key.txt'
-        $kDst = Join-Path $PSScriptRoot '站点管理密钥.txt'
-        $curKH = if (Test-Path -LiteralPath $kDst) { (Get-UpdFileInfo $kDst).hash } else { '' }
-        if (-not $curKH -or $curKH.ToLower() -ne ([string]$kMeta.hash).ToLower()) {
-            Log ("云端同步：发现新版站点管理密钥（{0}），下载中..." -f $kMeta.version)
-            if (Update-SingleCloudFile $kUpd @([string]$kMeta.url) ([string]$kMeta.hash)) {
-                Copy-Item $kUpd $kDst -Force
-                try {
-                    $k = ((Get-Content -LiteralPath $kDst -Raw) | Out-String).Trim()
-                    if (-not [string]::IsNullOrEmpty($k)) { $script:SiteSetKey = $k }
-                } catch {}
-                Log ("云端同步：站点管理密钥已更新为 {0} 并即时生效" -f $kMeta.version)
-                $upd++
-            } else {
-                Log '云端同步：站点管理密钥下载/校验失败，保留现有密钥'
-            }
-        }
-    }
     if ($null -ne $v.apk -and -not [string]::IsNullOrEmpty($v.apk.hash)) {
         $apkPath = Join-Path $updDir '培基智多星学习系统.apk'
         $cur = if (Test-Path $apkPath) { (Get-FileHash $apkPath -Algorithm SHA256).Hash } else { '' }
