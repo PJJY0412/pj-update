@@ -352,6 +352,7 @@ const Storage = {
     const existing = this.getStudents().filter(s => !(s && s.name && dead[String(s.name)]));
     const dict = {};
     existing.forEach(s => { if (s && s.name) dict[s.name] = s; });
+    const my = this.getMySite();
     list.forEach(incoming => {
       if (!incoming || !incoming.name) return;
       if (dead[String(incoming.name)]) return;
@@ -362,8 +363,10 @@ const Storage = {
         keep.id = local.id;
         if (local.grade != null) keep.grade = local.grade;
         if (local.gradeStartYear != null) keep.gradeStartYear = local.gradeStartYear;
-        // 地点以本地为准（本地先注册/先接收的档案含本地点 site；云端名单可能漏带 site）
-        if (local.site) keep.site = local.site;
+        // 站点归属跟随当前地点：远端名单 site 与本机一致时，更新本地 site（平板搬到新点后
+        // 该点 roster 上的学员应可见）；否则保留本地 site（远端可能漏带 site，本地为准）
+        if (my && incoming.site === my) keep.site = my;
+        else if (local.site) keep.site = local.site;
         // 注册时间取"最早"：远端自动建档的副本（晚于原始注册）若不收敛，8/31 学年滚动后
         // 各设备算出的当前年级相差 1，会交替改写电脑端学员库文件夹（二年级↔三年级 往复）。
         // 统一取最早注册时间让所有设备口径一致（勿回退）
