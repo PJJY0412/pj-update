@@ -23,7 +23,7 @@ $ttsMaxCache = 80MB
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260913-3'
+$script:SelfVer = '20260915-1'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -2226,13 +2226,19 @@ function Handle-Http {
             if (-not (Test-SiteSetKey $rKey)) {
                 Log ("/rename-site 密钥校验失败（来自 {0}）" -f $clientIp)
                 Send-Response $stream '403 Forbidden' 'application/json; charset=utf-8' '{"ok":false,"err":"key invalid"}'
-            } elseif ([string]::IsNullOrWhiteSpace($rSite)) {
-                Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' '{"ok":false,"err":"新站点名不能为空"}'
+            } else {
+                $rSite = $rSite.Trim()
+            }
+            if ([string]::IsNullOrWhiteSpace($rSite)) {
+                Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' '{"ok":false,"err":"站点名不能为空"}'
+            } elseif ($rSite.Length -gt 40) {
+                Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' '{"ok":false,"err":"站点名过长"}'
+            } elseif ($rSite.StartsWith('#')) {
+                Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' '{"ok":false,"err":"站点名不能以 # 开头"}'
             } elseif ($rSite -match '[\\/:*?"<>|\r\n]') {
                 Send-Response $stream '400 Bad Request' 'application/json; charset=utf-8' '{"ok":false,"err":"站点名含非法字符"}'
             } else {
                 $oldSite = Get-LocalSite
-                $rSite = $rSite.Trim()
                 if ($oldSite -eq $rSite) {
                     Log ("/rename-site 站点名相同未变更 [{0}]（来自 {1}）" -f $oldSite, $clientIp)
                     Send-Response $stream '200 OK' 'application/json; charset=utf-8' (@{ ok = $true; site = $rSite; old = $oldSite; changed = 0; skipped = 0; message = '新旧站点名相同，无需变更' } | ConvertTo-Json -Compress)
