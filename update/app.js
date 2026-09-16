@@ -4780,8 +4780,16 @@ main.innerHTML = html;
     });
   },
 
-  // 超管专用：合并本机/本电脑远端 + 云端全部站点名单，按 name+grade 去重（不同站同名保留，靠 site 区分）
+  // 超管专用：合并本机/本电脑远端 + 云端全部站点名单，按 name+grade 去重（不同站同名保留，靠 site 区分）。
+  // 合并顺序优先本地点桶：断开 LAN 时（remote=[]）云端列表仍先排本地点学员，📍 归属不漂到其他站点（勿回退）
   _mergeAdminRemote(baseRemote, allSites) {
+    const my = Storage.getMySite() || '';
+    const sitePri = (s) => {
+      const st = (s && s.site) || '';
+      if (my && st === my) return 0;
+      if (!st) return 1;
+      return 2;
+    };
     const seen = {};
     const out = [];
     (baseRemote || []).forEach(s => {
@@ -4792,13 +4800,17 @@ main.innerHTML = html;
       seen[key] = true;
       out.push({ name: s.name, grade: parseInt(s.grade, 10) || 1, createdAt: s.createdAt || '', site: s.site || '' });
     });
-    (allSites || []).forEach(s => {
+    (allSites || []).slice().sort((a, b) => {
+      const d = sitePri(a) - sitePri(b);
+      if (d !== 0) return d;
+      return String(a.site || '').localeCompare(String(b.site || ''), 'zh');
+    }).forEach(s => {
       const nm = String(s.name || '').trim();
       if (!nm) return;
       const key = nm + '|' + (parseInt(s.grade, 10) || 1);
       if (seen[key]) return;
       seen[key] = true;
-      out.push(s);
+      out.push({ name: s.name, grade: parseInt(s.grade, 10) || 1, createdAt: s.createdAt || '', site: s.site || '' });
     });
     return out;
   },
@@ -4876,12 +4888,47 @@ main.innerHTML = html;
     if (remote.length) {
       html += '<div class="admin-section" style="margin-top:14px">';
       html += '<h3 style="margin:6px 0">🌐 ' + (this._adminTier === 'super' ? '全部站点学员库' : '电脑端学员库') + '（' + grade + '年级）</h3>';
-      remote.forEach(s => {
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--card);border-radius:8px;padding:8px 12px;margin:4px 0">';
-        html += '<span style="font-weight:700">' + this._h(s.name) + (s.site ? ' <span style="font-size:11px;color:var(--primary)">📍' + this._h(s.site) + '</span>' : '') + '</span>';
-        html += '<span style="font-size:11px;color:var(--text-light)">' + (s.createdAt ? '注册 ' + new Date(s.createdAt).toLocaleDateString('zh-CN') : '') + '</span>';
-        html += '</div>';
-      });
+      if (this._adminTier === 'super') {
+        // 超管档：按站点分文件夹显示，本地点默认展开，其余站点折叠（断开 LAN 同样适用，云端名单按 site 分组）
+        const mySite = Storage.getMySite() || '';
+        const groups = {};
+        remote.forEach(function(s) {
+          const st = s.site || '(未标注站点)';
+          if (!groups[st]) groups[st] = [];
+          groups[st].push(s);
+        });
+        const siteKeys = Object.keys(groups).sort(function(a, b) {
+          const pa = (a === mySite) ? 0 : (a === '(未标注站点)' ? 1 : 2);
+          const pb = (b === mySite) ? 0 : (b === '(未标注站点)' ? 1 : 2);
+          if (pa !== pb) return pa - pb;
+          return String(a).localeCompare(String(b), 'zh');
+        });
+        html += '<div style="font-size:12px;color:var(--text-light);margin:6px 0 8px">共 ' + remote.length + ' 人，按站点分组（📍 显示归属地点）</div>';
+        siteKeys.forEach(function(st, idx) {
+          const list = groups[st].slice().sort(function(a, b) { return String(a.name).localeCompare(String(b.name), 'zh'); });
+          const isMy = st === mySite;
+          html += '<div class="site-folder-head" data-sidx="' + idx + '" style="display:flex;align-items:center;justify-content:space-between;background:#DCEDC8;padding:8px 12px;cursor:pointer;user-select:none;border-radius:6px;margin:6px 0 0">';
+          html += '<span style="font-weight:700">📁 ' + (st === '(未标注站点)' ? '未标注站点' : '📍' + this._h(st)) + ' <span style="font-size:11px;opacity:.8">· ' + list.length + ' 人</span>' + (isMy ? ' <span style="font-size:11px;color:var(--primary)">（本地点）</span>' : '') + '</span>';
+          html += '<span class="site-folder-arrow">' + (isMy ? '▲' : '▼') + '</span>';
+          html += '</div>';
+          html += '<div class="site-folder-body" style="display:' + (isMy ? 'block' : 'none') + ';padding:4px 0">';
+          list.forEach(function(s) {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--card);border-radius:8px;padding:8px 12px;margin:4px 0">';
+            html += '<span style="font-weight:700">' + this._h(s.name) + '</span>';
+            html += '<span style="font-size:11px;color:var(--text-light)">' + (s.createdAt ? '注册 ' + new Date(s.createdAt).toLocaleDateString('zh-CN') : '') + '</span>';
+            html += '</div>';
+          }, this);
+          html += '</div>';
+          html += '</div>';
+        }, this);
+      } else {
+        remote.forEach(s => {
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--card);border-radius:8px;padding:8px 12px;margin:4px 0">';
+          html += '<span style="font-weight:700">' + this._h(s.name) + (s.site ? ' <span style="font-size:11px;color:var(--primary)">📍' + this._h(s.site) + '</span>' : '') + '</span>';
+          html += '<span style="font-size:11px;color:var(--text-light)">' + (s.createdAt ? '注册 ' + new Date(s.createdAt).toLocaleDateString('zh-CN') : '') + '</span>';
+          html += '</div>';
+        });
+      }
       html += '</div>';
     }
     if (!local.length && !remote.length) {
@@ -4891,6 +4938,16 @@ main.innerHTML = html;
     container.querySelectorAll('.grade-back').forEach(el => el.addEventListener('click', () => this._renderAdminStudents(period)));
     container.querySelectorAll('.admin-filter-btn').forEach(btn => {
       btn.addEventListener('click', () => this._renderAdminStudents(btn.dataset.period));
+    });
+    container.querySelectorAll('.site-folder-head').forEach(head => {
+      head.addEventListener('click', () => {
+        const body = head.nextElementSibling;
+        if (!body) return;
+        const show = body.style.display === 'none';
+        body.style.display = show ? 'block' : 'none';
+        const arrow = head.querySelector('.site-folder-arrow');
+        if (arrow) arrow.textContent = show ? '▲' : '▼';
+      });
     });
     document.querySelectorAll('.asc-del-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -9176,12 +9233,17 @@ if (mode === 'student') {
         this._fetchJsonTimeout('https://cdn.jsdelivr.net/gh/PJJY0412/pj-update@master/update/students.json', 8000)
           .then(txt => {
             const list = parseTxt(txt);
+            if (String(txt).indexOf('\ufffd') !== -1) { throw new Error('mojibake: CDN stale'); }
             if (list.length || /^[[{]/.test(String(txt).trim())) { resolve(list); }
             else { throw new Error('empty'); }
           })
           .catch(() => {
             this._fetchJsonTimeout('https://raw.githubusercontent.com/PJJY0412/pj-update/master/update/students.json', 8000)
-              .then(txt => resolve(parseTxt(txt)))
+              .then(txt => {
+                const list = parseTxt(txt);
+                if (list.length || /^[[{]/.test(String(txt).trim())) { resolve(list); }
+                else { resolve(null); }
+              })
               .catch(() => resolve(null));
           });
       } catch (e) { resolve(null); }
@@ -16935,4 +16997,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260916-1747';
+window.__SERVER_VER = '20260916-1749';
