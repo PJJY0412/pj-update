@@ -4795,7 +4795,7 @@ main.innerHTML = html;
     (baseRemote || []).forEach(s => {
       const nm = String(s.name || '').trim();
       if (!nm) return;
-      const key = nm + '|' + (parseInt(s.grade, 10) || 1);
+      const key = nm + '|' + (parseInt(s.grade, 10) || 1) + '|' + ((s && s.site) || '');
       if (seen[key]) return;
       seen[key] = true;
       out.push({ name: s.name, grade: parseInt(s.grade, 10) || 1, createdAt: s.createdAt || '', site: s.site || '' });
@@ -4807,7 +4807,7 @@ main.innerHTML = html;
     }).forEach(s => {
       const nm = String(s.name || '').trim();
       if (!nm) return;
-      const key = nm + '|' + (parseInt(s.grade, 10) || 1);
+      const key = nm + '|' + (parseInt(s.grade, 10) || 1) + '|' + ((s && s.site) || '');
       if (seen[key]) return;
       seen[key] = true;
       out.push({ name: s.name, grade: parseInt(s.grade, 10) || 1, createdAt: s.createdAt || '', site: s.site || '' });
@@ -16997,4 +16997,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260916-1749';
+window.__SERVER_VER = '20260916-1750';
