@@ -23,7 +23,7 @@ $ttsMaxCache = 80MB
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260915-1'
+$script:SelfVer = '20260916-1'
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -299,7 +299,7 @@ function Migrate-CloudSiteBucket([string]$oldSite, [string]$newSite) {
                 $body = @{ message = "rename site: $oldSite -> $newSite"; content = $contentB64; branch = 'master' }
                 if ($sha) { $body.sha = $sha }
                 try {
-                    $null = Invoke-RestMethod -Uri $api -Headers $h -Method Put -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 60
+                    $null = Invoke-RestMethod -Uri $api -Headers $h -Method Put -Body ([System.Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json))) -ContentType 'application/json; charset=utf-8' -TimeoutSec 60
                     $done = $true
                 } catch {
                     if ($attempt -lt 2) { Start-Sleep -Milliseconds 600 }
@@ -612,7 +612,7 @@ function Sync-StudentsToCloud {
             $body = @{ message = "sync students ($siteName)"; content = $contentB64; branch = 'master' }
             if ($sha) { $body.sha = $sha }
             try {
-                $null = Invoke-RestMethod -Uri $api -Headers $h -Method Put -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 60
+                $null = Invoke-RestMethod -Uri $api -Headers $h -Method Put -Body ([System.Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json))) -ContentType 'application/json; charset=utf-8' -TimeoutSec 60
             } catch {
                 # 并发冲突（sha 过期）→ 重读重试；3 次内仍失败则放弃本轮
                 $finalJson = $null
@@ -648,7 +648,7 @@ function Sync-WrongAccumToCloud {
                 $existing = Invoke-RestMethod -Uri "$api/$remotePath" -Headers $h -Method Get -TimeoutSec 30
                 if ($existing.sha) { $body.sha = [string]$existing.sha }
             } catch {}
-            $null = Invoke-RestMethod -Uri "$api/$remotePath" -Headers $h -Method Put -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 60
+            $null = Invoke-RestMethod -Uri "$api/$remotePath" -Headers $h -Method Put -Body ([System.Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json))) -ContentType 'application/json; charset=utf-8' -TimeoutSec 60
         }
 
         $pushed = 0
