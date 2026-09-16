@@ -6294,6 +6294,7 @@ if (students.length === 0) {
       container.innerHTML = html;
       return;
     }
+    html += '<div id="recv-scan-list">';
     students.forEach(s => {
       const grade = Storage.getCurrentGrade(s);
       const works = Storage.getScanWorks(s.id);
@@ -6306,7 +6307,7 @@ if (students.length === 0) {
       html += '<span style="color:var(--primary);font-size:13px">📷 扫描/错题</span>';
       html += '</div>';
     });
-    html += '</div>';
+    html += '</div></div>';
     container.innerHTML = html;
 
     const recvBtn = document.getElementById('recv-wrong');
@@ -6482,6 +6483,8 @@ const name = s2 ? s2.name : '';
   _renderReceivePanel() {
     const panel = document.getElementById('recv-panel');
     if (!panel) return;
+    const scanList = document.getElementById('recv-scan-list');
+    if (scanList) scanList.style.display = 'none';
     const savedHost = this._getSavedHost();
     const students = Storage.getSiteStudents();
     const mode = Storage.getTransportMode();
@@ -6498,13 +6501,16 @@ const name = s2 ? s2.name : '';
     html += '<div id="recv-cloud-block"' + (mode === 'lan' ? ' style="display:none"' : '') + '>';
     html += '<div style="font-size:11px;color:var(--text-light);margin-bottom:6px">接收电脑或平板上传的云端错题（需联网，云端保留约 1 天）</div>';
     html += '</div>';
-    html += '<select class="login-input" id="recv-student" style="margin-bottom:6px;appearance:auto;-webkit-appearance:auto">';
-    html += '<option value="">选择接收的学员</option>';
+    html += '<div style="margin-bottom:6px;border:1px solid #BBDEFB;background:#fff;border-radius:8px;padding:6px 8px;max-height:170px;overflow-y:auto">';
+    html += '<div style="font-size:12px;color:var(--text-light);padding:2px 0 4px">勾选要接收的学员（可多选）</div>';
     students.forEach(s => {
       if (!this._gradeAllowed(Storage.getCurrentGrade(s))) return;
-      html += '<option value="' + s.id + '">' + this._h(s.name) + '（' + Storage.getCurrentGrade(s) + '年级）</option>';
+      html += '<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px;cursor:pointer">';
+      html += '<input type="checkbox" class="recv-stu" value="' + s.id + '">';
+      html += '<span>' + this._h(s.name) + '（' + Storage.getCurrentGrade(s) + '年级）</span>';
+      html += '</label>';
     });
-    html += '</select>';
+    html += '</div>';
     html += '<div style="display:flex;gap:8px">';
     html += '<button class="login-btn" id="recv-do" style="flex:1">⬇ 接收</button>';
     html += '<button class="admin-gen-btn" id="recv-close" style="flex:1">收起</button>';
@@ -6522,15 +6528,23 @@ const name = s2 ? s2.name : '';
       });
     });
 
-    document.getElementById('recv-close').addEventListener('click', () => { panel.innerHTML = ''; });
+    document.getElementById('recv-close').addEventListener('click', () => {
+      panel.innerHTML = '';
+      const scanList2 = document.getElementById('recv-scan-list');
+      if (scanList2) scanList2.style.display = '';
+    });
     document.getElementById('recv-do').addEventListener('click', () => {
       const isCloud = Storage.getTransportMode() === 'cloud';
-      const sid = document.getElementById('recv-student').value;
       const status = document.getElementById('recv-status');
-      if (!sid) { status.textContent = '请选择接收的学员'; return; }
-      const student = students.find(s => s.id === parseInt(sid));
-      if (!student) { status.textContent = '学员不存在'; return; }
-      const merge = (items) => {
+      const boxes = document.querySelectorAll('.recv-stu:checked');
+      if (boxes.length === 0) { status.textContent = '请勾选要接收的学员'; return; }
+      const targetStudents = [];
+      boxes.forEach(cb => {
+        const st = students.find(s => s.id === parseInt(cb.value));
+        if (st) targetStudents.push(st);
+      });
+      if (targetStudents.length === 0) { status.textContent = '学员不存在'; return; }
+      const merge = (student, items) => {
         const wrongs = Storage.getWrongQuestions(student.id);
         const existing = {};
         wrongs.forEach(w => { existing[w.text] = true; });
@@ -6549,16 +6563,20 @@ const name = s2 ? s2.name : '';
           added++;
         });
         Storage.saveWrongQuestions(student.id, wrongs);
-        status.textContent = '✅ 接收成功：新增 ' + added + ' 题（重复 ' + (items.length - added) + ' 题已跳过）';
+        return added;
       };
+      status.textContent = '正在接收 ' + targetStudents.length + ' 名学员...';
       if (isCloud) {
-        status.textContent = '正在连接云端...';
         this._cloudPull().then(groups => {
-          const items = (groups[student.name] || [])
-            .filter(it => String(it.text || '').trim())
-            .filter(it => this._gradeAllowed(it.grade || Storage.getCurrentGrade(student)));
-          if (items.length === 0) { status.textContent = 'ℹ️ 云端暂无该学员的错题（或非本机负责年级，或已被接收过）'; return; }
-          merge(items);
+          let msg = '';
+          targetStudents.forEach(st => {
+            const items = (groups[st.name] || [])
+              .filter(it => String(it.text || '').trim())
+              .filter(it => this._gradeAllowed(it.grade || Storage.getCurrentGrade(st)));
+            const added = merge(st, items);
+            msg += st.name + ' +' + added + '  ';
+          });
+          status.textContent = '✅ 接收完成：' + msg.trim();
         }).catch(e => {
           status.textContent = '❌ 云端连接失败：' + (e.message || e) + '，请检查平板网络';
         });
@@ -6567,17 +6585,22 @@ const name = s2 ? s2.name : '';
       const host = document.getElementById('recv-host').value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
       if (!host) { status.textContent = '请填写电脑 IP'; return; }
       this._saveHost(host);
-      status.textContent = '正在连接电脑...';
-      this._lanGet('http://' + host + ':8899/pull?student=' + encodeURIComponent(student.name)).then(res => {
-        if (!res.ok) { status.textContent = '❌ 连接失败：' + (res.err || '无法连接电脑，请确认接收器已启动且平板与电脑在同一网络'); return; }
-        let items = [];
-        try { const j = JSON.parse(res.body || '{}'); items = j.items || []; } catch (e) {}
-        items = items.filter(it => this._gradeAllowed(it.grade || Storage.getCurrentGrade(student)));
-        if (items.length === 0) {
-          status.textContent = 'ℹ️ 电脑上该学员暂无错题（或非本机负责年级）';
-          return;
-        }
-        merge(items);
+      const p = targetStudents.map(st => {
+        return this._lanGet('http://' + host + ':8899/pull?student=' + encodeURIComponent(st.name)).then(res => {
+          if (!res.ok) return { name: st.name, added: -1, err: res.err || '连接失败' };
+          let items = [];
+          try { const j = JSON.parse(res.body || '{}'); items = j.items || []; } catch (e) {}
+          items = items.filter(it => this._gradeAllowed(it.grade || Storage.getCurrentGrade(st)));
+          const added = merge(st, items);
+          return { name: st.name, added: added, err: null };
+        });
+      });
+      Promise.all(p).then(rs => {
+        const ok = rs.filter(r => r.added >= 0);
+        const bad = rs.filter(r => r.added < 0);
+        let msg = ok.map(r => r.name + ' +' + r.added).join('、') || '无';
+        if (bad.length) msg += '；失败：' + bad.map(r => r.name + '（' + r.err + '）').join('、');
+        status.textContent = '✅ 接收完成：' + msg;
       });
     });
   },
@@ -8767,16 +8790,19 @@ html += '<div id="pub-recv-status" style="font-size:12px;color:var(--text-light)
       const body = document.getElementById('pub-target-body');
       if (!body) return;
       let b = '';
-      if (mode === 'student') {
-        b += '<select class="login-input" id="pub-target-student" style="appearance:auto;-webkit-appearance:auto;margin-bottom:8px">';
-        b += '<option value="">选择要发送的学员</option>';
-students.forEach(s => {
+if (mode === 'student') {
+        b += '<div style="margin-bottom:8px;border:1px solid #BBDEFB;background:#fff;border-radius:8px;padding:6px 8px;max-height:170px;overflow-y:auto">';
+        b += '<div style="font-size:12px;color:var(--text-light);padding:2px 0 4px">勾选要发送的学员（可多选）</div>';
+        students.forEach(s => {
           const g = s.remote ? s.grade : Storage.getCurrentGrade(s);
           if (!this._gradeAllowed(g)) return;
           const key = s.remote ? 'r' + s.name : String(s.id);
-          b += '<option value="' + key + '">' + this._h(s.name) + (s.remote ? ' 🌐' : '') + '（' + g + '年级）</option>';
+          b += '<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px;cursor:pointer">';
+          b += '<input type="checkbox" class="pub-target-stu" value="' + key + '">';
+          b += '<span>' + this._h(s.name) + (s.remote ? ' 🌐' : '') + '（' + g + '年级）</span>';
+          b += '</label>';
         });
-        b += '</select>';
+        b += '</div>';
         b += '<div style="font-size:11px;color:var(--text-light);margin-bottom:8px">发送后学员平板在"📊 学习统计 → 📥 老师练习"即可收到（走云端）</div>';
         b += '<button class="login-btn" id="pub-target-send" style="width:100%">📤 发送到学员</button>';
       } else {
@@ -8790,26 +8816,32 @@ students.forEach(s => {
       const sendBtn = document.getElementById('pub-target-send');
       if (sendBtn) sendBtn.addEventListener('click', () => {
         if (mode === 'student') {
-          const key = document.getElementById('pub-target-student').value;
-          if (!key) { alert('请选择学员'); return; }
-          const s = students.find(x => (x.remote ? 'r' + x.name === key : String(x.id) === key));
+          const boxes = document.querySelectorAll('.pub-target-stu:checked');
+          if (boxes.length === 0) { alert('请勾选要发送的学员'); return; }
+          const targets = [];
+          boxes.forEach(cb => {
+            const key = cb.value;
+            const s = students.find(x => (x.remote ? 'r' + x.name === key : String(x.id) === key));
+            if (s) targets.push(s);
+          });
+          if (targets.length === 0) { alert('学员不存在'); return; }
           const topic = Storage.getTaskTopic();
-          const toId = s && !s.remote ? parseInt(s.id) : null;
-          sendBtn.textContent = '正在发送...';
-          const msg4 = { toId: toId, toName: s ? s.name : '', items: sel.map(w => ({ subject: w.subject, text: w.text, note: '', answer: '' })), from: '公共错题库', sentAt: new Date().toISOString() };
-          try { this._lanTaskPush(msg4); } catch (e) {}
-          fetch(topic, { method: 'PUT', body: JSON.stringify(msg4) })
-            .then(r => {
-              if (r.ok) {
-                alert('✅ 已发送 ' + sel.length + ' 题给 ' + (s ? s.name : sid) + '，学员平板点"📥 老师练习"即可收到');
-                self._pubSel = {};
-                if (self._pubSendSource === 'archive') { self._pubSendSource = null; self._renderWrongArchive(); }
-                else self._renderPublicWrongBank();
-              } else {
-                alert('❌ 发送失败（' + r.status + '），请检查网络后重试');
-              }
-            })
-            .catch(e => alert('❌ 发送失败：' + (e.message || e)));
+          sendBtn.textContent = '正在发送 ' + targets.length + ' 名学员...';
+          Promise.all(targets.map(s => {
+            const toId = s && !s.remote ? parseInt(s.id) : null;
+            const msg4 = { toId: toId, toName: s ? s.name : '', items: sel.map(w => ({ subject: w.subject, text: w.text, note: '', answer: '' })), from: '公共错题库', sentAt: new Date().toISOString() };
+            try { this._lanTaskPush(msg4); } catch (e) {}
+            return fetch(topic, { method: 'PUT', body: JSON.stringify(msg4) }).then(r => r.ok);
+          })).then(oks => {
+            if (oks.every(Boolean)) {
+              alert('✅ 已发送 ' + sel.length + ' 题给 ' + targets.length + ' 名学员：' + targets.map(t => t.name).join('、') + '，学员平板点"📥 老师练习"即可收到');
+              self._pubSel = {};
+              if (self._pubSendSource === 'archive') { self._pubSendSource = null; self._renderWrongArchive(); }
+              else self._renderPublicWrongBank();
+            } else {
+              alert('❌ 部分发送失败（云端），请检查网络后重试');
+            }
+          }).catch(e => alert('❌ 发送失败：' + (e.message || e)));
           return;
         }
         const folderName = document.getElementById('pub-target-folder-name').value.trim();
@@ -16903,4 +16935,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260915-1746';
+window.__SERVER_VER = '20260916-1747';
