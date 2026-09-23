@@ -23,7 +23,14 @@ $ttsMaxCache = 80MB
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260916-1'
+$script:SelfVer = '20260916-2'
+
+# GitHub 令牌位置：优先“工具\.pj_update_token”（随工具\文件夹复制携带，防遗漏），没有则回退用户目录 .pj_update_token
+function Get-TokenPath {
+    $local = Join-Path $PSScriptRoot '.pj_update_token'
+    if (Test-Path $local) { return $local }
+    return Join-Path $env:USERPROFILE '.pj_update_token'
+}
 
 # ---------- AI 出题（举一反三） ----------
 $aiKeyFile = Join-Path $PSScriptRoot 'ai-key.txt'
@@ -226,7 +233,7 @@ function Migrate-CloudSiteBucket([string]$oldSite, [string]$newSite) {
     if ([string]::IsNullOrEmpty($oldSite) -or [string]::IsNullOrEmpty($newSite)) { return $false }
     if ($oldSite -eq $newSite) { return $true }
     try {
-        $tf = Join-Path $env:USERPROFILE '.pj_update_token'
+        $tf = Get-TokenPath
         if (-not (Test-Path $tf)) { return $false }
         $token = (Get-Content $tf -Raw -Encoding UTF8).Trim()
         if (-not $token) { return $false }
@@ -545,7 +552,7 @@ function Sync-StudentsToCloud {
         }
 
         # 读取 GitHub 令牌
-        $tf = Join-Path $env:USERPROFILE '.pj_update_token'
+        $tf = Get-TokenPath
         if (-not (Test-Path $tf)) { Log '云端学员同步：未找到令牌，跳过'; return }
         $token = (Get-Content $tf -Raw -Encoding UTF8).Trim()
         if (-not $token) { Log '云端学员同步：令牌为空，跳过'; return }
@@ -630,7 +637,7 @@ function Sync-WrongAccumToCloud {
     try {
         # 开发机保护
         if (Test-Path (Join-Path $PSScriptRoot 'no-cloud-sync.dev')) { return }
-        $tf = Join-Path $env:USERPROFILE '.pj_update_token'
+        $tf = Get-TokenPath
         if (-not (Test-Path $tf)) { return }
         $token = (Get-Content $tf -Raw -Encoding UTF8).Trim()
         if (-not $token) { return }
