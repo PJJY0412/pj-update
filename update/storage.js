@@ -975,6 +975,91 @@ const Storage = {
     return hw;
   },
 
+  saveHomeworkDictEn(studentId, homework) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    this.save('homework_dict_en', homework);
+    this._studentId = prev;
+  },
+
+  getHomeworkDictEn(studentId) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    const hw = this.load('homework_dict_en', null);
+    this._studentId = prev;
+    return hw;
+  },
+
+  saveHomeworkDictZh(studentId, homework) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    this.save('homework_dict_zh', homework);
+    this._studentId = prev;
+  },
+
+  getHomeworkDictZh(studentId) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    const hw = this.load('homework_dict_zh', null);
+    this._studentId = prev;
+    return hw;
+  },
+
+  getDictWrong(studentId, subject) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    const list = this.load('dictWrong_' + subject, []);
+    this._studentId = prev;
+    return Array.isArray(list) ? list : [];
+  },
+
+  saveDictWrong(studentId, subject, list) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    this.save('dictWrong_' + subject, Array.isArray(list) ? list : []);
+    this._studentId = prev;
+  },
+
+  addDictWrong(studentId, subject, text) {
+    text = String(text == null ? '' : text).trim();
+    if (!text) return;
+    const prev = this._studentId;
+    this._studentId = studentId;
+    let list = this.load('dictWrong_' + subject, []);
+    if (!Array.isArray(list)) list = [];
+    const hit = list.some(function(x) { return String(x.text).trim() === text; });
+    if (!hit) {
+      list.push({ text: text, addedAt: new Date().toISOString() });
+      this.save('dictWrong_' + subject, list);
+    }
+    this._studentId = prev;
+  },
+
+  removeDictWrong(studentId, subject, text) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    const list = this.load('dictWrong_' + subject, []);
+    if (Array.isArray(list)) {
+      this.save('dictWrong_' + subject, list.filter(function(x) { return String(x.text).trim() !== String(text).trim(); }));
+    }
+    this._studentId = prev;
+  },
+
+  getDictResult(studentId, subject) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    const r = this.load('dictResult_' + subject, null);
+    this._studentId = prev;
+    return r;
+  },
+
+  saveDictResult(studentId, subject, result) {
+    const prev = this._studentId;
+    this._studentId = studentId;
+    this.save('dictResult_' + subject, result || null);
+    this._studentId = prev;
+  },
+
   saveDailyProgress(studentId, progress) {
     const prev = this._studentId;
     this._studentId = studentId;
