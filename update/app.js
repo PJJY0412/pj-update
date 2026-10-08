@@ -1216,11 +1216,13 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     const main = document.getElementById('main-content');
     const sid = this.currentStudent.id;
     const cols = [
-      { icon: '📗', subj: 'english', label: '英语', hw: Storage.getHomework(sid) },
-      { icon: '📘', subj: 'chinese', label: '语文', hw: Storage.getHomeworkZh(sid) },
-      { icon: '📙', subj: 'math', label: '数学', hw: Storage.getHomeworkMath(sid) }
+      { icon: '📗', subj: 'english', srcSubj: 'english', label: '英语', hw: Storage.getHomework(sid) },
+      { icon: '📘', subj: 'chinese', srcSubj: 'chinese', label: '语文', hw: Storage.getHomeworkZh(sid) },
+      { icon: '📙', subj: 'math', srcSubj: 'math', label: '数学', hw: Storage.getHomeworkMath(sid) },
+      { icon: '🔊', subj: 'dictEn', srcSubj: 'english', label: '英语听写', dict: true, hw: Storage.getHomeworkDictEn(sid) },
+      { icon: '🔉', subj: 'dictZh', srcSubj: 'chinese', label: '语文听写', dict: true, hw: Storage.getHomeworkDictZh(sid) }
     ];
-    const anyHw = cols.some(c => c.hw && this.getHomeworkWords(c.hw, c.subj).length > 0);
+    const anyHw = cols.some(c => c.hw && this.getHomeworkWords(c.hw, c.srcSubj).length > 0);
     let html = '<div class="subject-container">';
     html += '<button class="back-btn" onclick="App.renderSubjectSelector()">← 返回上一级</button>';
     html += '<h2 class="course-title">📅 每天必练</h2>';
@@ -1233,12 +1235,12 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     }
     html += '<div style="padding:0 16px">';
     cols.forEach(c => {
-      const words = c.hw ? this.getHomeworkWords(c.hw, c.subj) : [];
-      const unitTxt = c.subj === 'chinese' ? '字' : c.subj === 'math' ? '题' : '词';
+      const words = c.hw ? this.getHomeworkWords(c.hw, c.srcSubj) : [];
+      const unitTxt = c.srcSubj === 'chinese' ? '字' : c.srcSubj === 'math' ? '题' : '词';
       html += '<div class="daily-subj-card" data-subj="' + c.subj + '" style="display:flex;align-items:center;gap:12px;padding:14px 16px;background:' + (words.length ? '#FFF' : '#FFF8F0') + ';border:1px solid ' + (words.length ? '#E0E0E0' : '#FFCC80') + ';border-radius:12px;margin-bottom:10px;cursor:pointer">';
       html += '<div style="font-size:26px">' + c.icon + '</div>';
       html += '<div style="flex:1">';
-      html += '<div style="font-size:15px;font-weight:700">' + c.label + '作业</div>';
+      html += '<div style="font-size:15px;font-weight:700">' + c.label + (c.dict ? '' : '作业') + '</div>';
       html += '<div style="font-size:12px;color:' + (words.length ? 'var(--text-light)' : '#E65100') + '">' + (words.length ? '已布置 ' + words.length + ' ' + unitTxt : '未布置 · 点进入查看') + (c.hw && c.hw.assignedAt ? '（' + new Date(c.hw.assignedAt).toLocaleDateString('zh-CN') + '）' : '') + '</div>';
       html += '</div>';
       html += '<span style="color:var(--primary);font-size:13px">开始 ▶</span>';
@@ -1250,12 +1252,128 @@ html += '<div id="unlock-status" style="font-size:12px;color:#8D6E63;line-height
     main.querySelectorAll('.daily-subj-card').forEach(card => {
       card.addEventListener('click', () => {
         const subj = card.dataset.subj;
-        if (subj === 'english') this.renderDailyPractice();
+        if (subj === 'dictEn') this.renderDictation('english');
+        else if (subj === 'dictZh') this.renderDictation('chinese');
+        else if (subj === 'english') this.renderDailyPractice();
         else if (subj === 'chinese') this.renderZhDailyModes();
         else this.renderMathDailyModes();
       });
     });
     this.updateTopBar();
+  },
+
+  renderDictation(subject) {
+    this.stopSpeaking();
+    this._dictGen = (this._dictGen || 0) + 1;
+    this._dictTimers = [];
+    this._dictState = null;
+    this._curDailySubject = '';
+    const main = document.getElementById('main-content');
+    const sid = this.currentStudent.id;
+    const hw = subject === 'chinese' ? Storage.getHomeworkDictZh(sid) : Storage.getHomeworkDictEn(sid);
+    const words = this.getHomeworkWords(hw, subject);
+    const icon = subject === 'chinese' ? '🔉' : '🔊';
+    const label = subject === 'chinese' ? '语文听写' : '英语听写';
+    let html = '<div class="subject-container">';
+    html += '<button class="back-btn" onclick="App.renderDailyHome()">← 返回上一级</button>';
+    html += '<h2 class="course-title">' + icon + ' ' + label + '</h2>';
+    if (!words.length) {
+      html += '<div class="empty-state" style="padding:30px"><p>老师还未布置' + label + '作业</p></div>';
+      html += '</div>';
+      main.innerHTML = html;
+      this.updateTopBar();
+      return;
+    }
+    html += '<div style="padding:0 16px;text-align:center">';
+    html += '<p style="font-size:13px;color:var(--text-light);margin-bottom:4px">只听发音、不显示词面，请把听到的写在本子上/纸上</p>';
+    html += '<div id="dict-prog" style="font-size:14px;color:var(--text-light);margin:14px 0">正在播放…</div>';
+    html += '<div style="display:flex;gap:10px;justify-content:center;margin-top:6px">';
+    html += '<button class="login-btn" id="dict-repeat" style="flex:1;max-width:220px">🔊 再听一遍</button>';
+    html += '<button class="admin-gen-btn" id="dict-exit" style="flex:1;max-width:220px">⏹ 结束</button>';
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+    main.innerHTML = html;
+    document.getElementById('dict-repeat').addEventListener('click', () => this._dictRepeat());
+    document.getElementById('dict-exit').addEventListener('click', () => this._dictExit());
+    this._dictState = { subject: subject, words: words, idx: 0, playing: true };
+    this._dictSpeakOnce(0, 0);
+    this.updateTopBar();
+  },
+
+  _dictSpeakOnce(idx, play) {
+    const gen = this._dictGen;
+    const st = this._dictState;
+    if (!st || gen !== this._dictGen || st.playing !== true || st.idx !== idx) return;
+    const w = st.words[idx];
+    const text = (st.subject === 'chinese' ? String(w.zi || w.en || '') : String(w.en || '')).trim();
+    const prog = document.getElementById('dict-prog');
+    if (prog) prog.textContent = '第 ' + (idx + 1) + ' / ' + st.words.length + ' 个 · 第 ' + (play + 1) + ' 遍';
+    if (!text) { this._dictAdvance(idx); return; }
+    const self = this;
+    // 本轮令牌：同词同遍的重听/重试各自独立，旧轮 onDone/watchdog 一律作废（防双进位）
+    const attempt = (st.attemptCount = (st.attemptCount || 0) + 1);
+    // 看门狗（2026-10-07）：发音链挂死时（链代际被外力烧掉后 onEnd 永不来 / masterGuard 因外来 _ttsSeq bump
+    // 而 alive() 失效）强制按"本遍已播完"推进，保证听写必然自动进下一个字/词；onDone 正常到达时清除。
+    const wd = setTimeout(function() {
+      if (self._dictState !== st || self._dictGen !== gen || st.idx !== idx || st.attemptCount !== attempt) return;
+      try { self.stopSpeaking(); } catch (e) {}
+      const nextPlay = play + 1;
+      if (nextPlay < 3) self._dictSpeakOnce(idx, nextPlay);
+      else self._dictAdvance(idx);
+    }, st.subject === 'chinese' ? 30000 : 22000);
+    if (Array.isArray(this._dictTimers)) this._dictTimers.push(wd);
+    const onDone = () => {
+      if (self._dictState !== st || self._dictGen !== gen) return;
+      if (st.attemptCount !== attempt) return;
+      clearTimeout(wd);
+      const nextPlay = play + 1;
+      self._dictTimers.push(setTimeout(() => {
+        if (self._dictState === st && self._dictGen === gen && st.idx === idx && st.attemptCount === attempt) {
+          if (nextPlay < 3) self._dictSpeakOnce(idx, nextPlay);
+          else self._dictAdvance(idx);
+        }
+      }, st.subject === 'chinese' ? 3000 : 4000));
+    };
+    if (st.subject === 'chinese') {
+      // 语文听写（2026-10-08 用户定案）：每个生字/词组严格连读 3 遍、遍间静默 3 秒、不读拼音——
+      // py 置空 + playTimes=1 使每遍只整词连读一次（词库整词 ogg / LAN 整词合成 / 逐字回退），
+      // 3 遍由本函数 play 计数器(0,1,2)驱动；读音走统一正音入口 _zhSpeakSeq（不依赖内置 TTS 引擎，部分平板原生 TTS 不可用，勿退回 _ttsSpeak zh-CN）。
+      this._zhSpeakSeq(text, '', onDone, { playTimes: 1 });
+    } else {
+      this._ttsSpeak({ text: text, language: 'en-US', volume: 1, onEnd: onDone });
+    }
+  },
+
+  _dictAdvance(idx) {
+    const gen = this._dictGen;
+    const st = this._dictState;
+    if (!st || gen !== this._dictGen || st.playing !== true) return;
+    if (idx + 1 >= st.words.length) {
+      st.playing = false;
+      const prog = document.getElementById('dict-prog');
+      if (prog) prog.textContent = '已读完 ' + st.words.length + ' 个，可点击"再听一遍"复习';
+      return;
+    }
+    st.idx = idx + 1;
+    this._dictSpeakOnce(st.idx, 0);
+  },
+
+  _dictRepeat() {
+    const st = this._dictState;
+    if (!st) return;
+    this.stopSpeaking();
+    st.playing = true;
+    this._dictSpeakOnce(st.idx, 0);
+  },
+
+  _dictExit() {
+    this._dictGen = (this._dictGen || 0) + 1;
+    this.stopSpeaking();
+    this._dictState = null;
+    if (Array.isArray(this._dictTimers)) { this._dictTimers.forEach(t => { clearTimeout(t); }); }
+    this._dictTimers = [];
+    this.renderDailyHome();
   },
 
   renderSubjectCards(subject) {
@@ -4867,6 +4985,7 @@ main.innerHTML = html;
   },
 
   _renderAdminGradeDetail(container, grade, local, remote) {
+    this._adminGradeDetail = { container, grade, local, remote };
     const period = this._adminFilter;
     const periodStart = {
       today: new Date().setHours(0, 0, 0, 0),
@@ -5298,7 +5417,7 @@ main.innerHTML = html;
       return adminGrades.indexOf(String(g).replace('年级', '')) !== -1;
     };
     let html = '<div class="admin-section">';
-    html += '<p style="margin:0 0 10px;font-size:13px;color:var(--text-light)">点击学员可为其单独布置；也可勾选多位学员，一次给选中学员布置同一份作业（保存后自动发送，学员在"每天必练"中接收完成；编辑器内可切换英语/语文/数学）</p>';
+    html += '<p style="margin:0 0 10px;font-size:13px;color:var(--text-light)">点击学员可为其单独布置；也可勾选多位学员，一次给选中学员布置同一份作业（保存后自动发送，学员在"每天必练"中接收完成；编辑器内可切换英语/语文/数学，并有各科🔊"听写"模式：只听发音、不显示词面，不判分）</p>';
     html += '<div id="hw-all-list"></div>';
     html += '<div style="margin-top:10px"><button class="login-btn" id="hw-multi-btn" style="width:100%">✏️ 为 0 位选中学员布置作业</button></div>';
     html += '</div>';
@@ -5306,9 +5425,11 @@ main.innerHTML = html;
 
     const list = [];
     const cols = [
-      { icon: '📗', subj: 'english', label: '英语' },
-      { icon: '📘', subj: 'chinese', label: '语文' },
-      { icon: '📙', subj: 'math', label: '数学' }
+      { icon: '📗', subj: 'english', srcSubj: 'english', label: '英语' },
+      { icon: '📘', subj: 'chinese', srcSubj: 'chinese', label: '语文' },
+      { icon: '📙', subj: 'math', srcSubj: 'math', label: '数学' },
+      { icon: '🔊', subj: 'dictEn', srcSubj: 'english', label: '英语听写' },
+      { icon: '🔉', subj: 'dictZh', srcSubj: 'chinese', label: '语文听写' }
     ];
     (Storage.getSiteStudents() || []).forEach(s => {
       const g = Storage.getCurrentGrade(s);
@@ -5320,7 +5441,9 @@ main.innerHTML = html;
         hw: {
           english: Storage.getHomework(s.id),
           chinese: Storage.getHomeworkZh(s.id),
-          math: Storage.getHomeworkMath(s.id)
+          math: Storage.getHomeworkMath(s.id),
+          dictEn: Storage.getHomeworkDictEn(s.id),
+          dictZh: Storage.getHomeworkDictZh(s.id)
         }
       });
     });
@@ -5339,16 +5462,16 @@ main.innerHTML = html;
           cols.forEach(c => {
             const hw = item.hw[c.subj];
             if (!hw) return;
-            const words = this.getHomeworkWords(hw, c.subj).length;
+            const words = this.getHomeworkWords(hw, c.srcSubj).length;
             if (words === 0) return;
-            const unitTxt = c.subj === 'chinese' ? '字' : c.subj === 'math' ? '题' : '词';
+            const unitTxt = c.srcSubj === 'chinese' ? '字' : c.srcSubj === 'math' ? '题' : '词';
             disp.push({ label: c.label, icon: c.icon, words: words, unitTxt: unitTxt, date: hw.assignedAt || '' });
           });
         } else if (item.remoteHw) {
           cols.forEach(c => {
             const n = parseInt(item.remoteHw[c.subj] || 0, 10) || 0;
             if (n <= 0) return;
-            const unitTxt = c.subj === 'chinese' ? '字' : c.subj === 'math' ? '题' : '词';
+            const unitTxt = c.srcSubj === 'chinese' ? '字' : c.srcSubj === 'math' ? '题' : '词';
             disp.push({ label: c.label, icon: c.icon, words: n, unitTxt: unitTxt, date: '' });
           });
         }
@@ -5436,7 +5559,7 @@ main.innerHTML = html;
     this._hwEditorStudent = null;
     const first = students[0];
     const prev = this._hwEditor || {
-      subject: 'english', gradeId: null, picked: {}, expandedUnit: null, manual: [], manualNotInBank: {}
+      subject: 'english', dict: false, gradeId: null, picked: {}, expandedUnit: null, manual: [], manualNotInBank: {}
     };
     const subject = prev.subject || 'english';
     const fakeStudent = { name: first.name, grade: first.grade != null ? first.grade : '', id: first.localId };
@@ -5448,6 +5571,7 @@ main.innerHTML = html;
       studentGrade: null,
       remote: false,
       subject: subject,
+      dict: !!prev.dict,
       gradeKey: subject,
       gradeId: gradeId,
       picked: prev.picked || {},
@@ -5467,7 +5591,7 @@ main.innerHTML = html;
     const localId = local ? student.id : (student.localId != null ? student.localId : null);
 
     const prev = this._hwEditor || {
-      subject: 'english', gradeId: null, picked: {}, expandedUnit: null, manual: [], manualNotInBank: {}
+      subject: 'english', dict: false, gradeId: null, picked: {}, expandedUnit: null, manual: [], manualNotInBank: {}
     };
     if (!subject) subject = prev.subject || 'english';
     let gradeId = prev.gradeId && prev.gradeKey === subject ? prev.gradeId : null;
@@ -5480,6 +5604,7 @@ main.innerHTML = html;
       studentGrade: student.grade || Storage.getCurrentGrade(student),
       remote: !!remoteLabel,
       subject: subject,
+      dict: !!prev.dict,
       gradeKey: subject,
       gradeId: gradeId,
       picked: prev.picked || {},
@@ -5548,13 +5673,22 @@ main.innerHTML = html;
     const subjMeta = {
       english: { icon: '📗', label: '英语' },
       chinese: { icon: '📘', label: '语文' },
-      math: { icon: '📙', label: '数学' }
+      math: { icon: '📙', label: '数学' },
+      dictEn: { icon: '🔊', label: '英语听写' },
+      dictZh: { icon: '🔉', label: '语文听写' }
     };
+    const tabMeta = (t) => t === 'dictEn' ? { subject: 'english', dict: true } : t === 'dictZh' ? { subject: 'chinese', dict: true } : { subject: t, dict: false };
     html += '<div style="display:flex;gap:8px;margin:10px 0">';
-    ['english', 'chinese', 'math'].forEach(s => {
-      html += '<button class="hw-subj-tab admin-gen-btn" data-subj="' + s + '" style="flex:1;' + (st.subject === s ? 'background:var(--primary);color:#fff;border-color:var(--primary)' : '') + '">' + subjMeta[s].icon + ' ' + subjMeta[s].label + '</button>';
+    ['english', 'chinese', 'math', 'dictEn', 'dictZh'].forEach(s => {
+      const m = tabMeta(s);
+      const active = st.subject === m.subject && (!!st.dict === m.dict);
+      html += '<button class="hw-subj-tab admin-gen-btn" data-subj="' + s + '" style="flex:1;' + (active ? 'background:#1976D2;color:#fff;border-color:#1976D2' : '') + '">' + subjMeta[s].icon + ' ' + subjMeta[s].label + '</button>';
     });
     html += '</div>';
+    if (st.dict) {
+      html += '<div style="margin:4px 0 10px;padding:8px 12px;background:#E3F2FD;border:1px solid #90CAF9;border-radius:8px;font-size:13px;color:#0D47A1">';
+      html += '🔊 听写模式：只读发音/字音、不显示词面，学生听到后写在本子上/纸上，不判分不入错题本。</div>';
+    }
 
     html += '<div style="margin:10px 0">';
     html += '<label style="font-size:13px;color:var(--text-light)">选择年级/学期（可预习下学期，也可复习任意学期）：</label>';
@@ -5657,6 +5791,50 @@ main.innerHTML = html;
     html += '</div>';
     html += '</div>';
     html += '</div>';
+    if (st.dict) {
+      const dictSubj = st.subject === 'chinese' ? 'zh' : 'en';
+      const dictPool = [];
+      const addPool = (sid, name) => {
+        if (sid == null) return;
+        Storage.getDictWrong(sid, dictSubj).forEach(x => {
+          const t = String(x.text || '').trim();
+          if (t) dictPool.push({ text: t, name: name || '学员', sid: sid });
+        });
+      };
+      if (st.students && st.students.length) {
+        st.students.forEach(s => addPool(s.localId != null ? s.localId : s.id, s.name));
+      } else {
+        addPool(st.studentId, st.studentName);
+      }
+      const seenD = {};
+      const dictPoolU = dictPool.filter(x => {
+        const k = x.sid + '|' + x.text;
+        if (seenD[k]) return false;
+        seenD[k] = true;
+        return true;
+      });
+      html += '<div class="hw-sec-card">';
+      html += '<div class="hw-sec-head"><span class="hw-sec-icon">🗂️</span><span>听写错词库</span></div>';
+      html += '<div class="hw-sec-body">';
+      html += '<p class="hw-sec-hint">勾选加入听写；✕ 将词从错词库移除（已掌握）</p>';
+      html += '<div style="border:1px solid #B3E5FC;background:#E1F5FE;border-radius:8px;padding:8px 10px;max-height:200px;overflow-y:auto">';
+      if (dictPoolU.length === 0) {
+        html += '<div style="font-size:12px;color:var(--text-light)">听写错词库为空（在"学习情况"卡片为学员听写打分判错的词会自动进入这里）</div>';
+      } else {
+        dictPoolU.forEach((it, idx) => {
+          const done = st.manual.indexOf(it.text) !== -1;
+          html += '<label style="display:flex;align-items:flex-start;gap:6px;padding:3px 0;font-size:13px">';
+          html += '<input type="checkbox" class="hw-dict-pick" data-idx="' + idx + '"' + (done ? ' checked' : '') + ' style="margin-top:2px">';
+          html += '<span style="flex:1;word-break:break-all">' + this._h(it.text) + '</span>';
+          html += '<small style="color:#0277BD;flex-shrink:0">' + this._h(it.name) + '</small>';
+          html += '<a href="javascript:void(0)" class="hw-dict-del" data-sid="' + it.sid + '" data-subj="' + dictSubj + '" data-w="' + this._h(it.text).replace(/"/g, '&quot;') + '" style="color:#C62828;font-weight:bold;flex-shrink:0" title="移除出听写错词库">✕</a>';
+          html += '</label>';
+        });
+      }
+      html += '</div>';
+      html += '</div>';
+      html += '</div>';
+    }
 
     const manuLabel = st.subject === 'chinese' ? '手动补充汉字' : st.subject === 'math' ? '手动补充算式/口诀' : '手动补充单词';
     const manuPh = st.subject === 'chinese' ? '输入汉字，多个用逗号分隔' : st.subject === 'math' ? '输入算式或口诀，多个用逗号分隔' : '输入单词，多个用逗号分隔';
@@ -5706,9 +5884,11 @@ main.innerHTML = html;
     document.querySelectorAll('.hw-subj-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         const ns = btn.dataset.subj;
-        if (ns === st.subject) return;
-        st.subject = ns;
-        st.gradeId = this._pickSubjectGrade(ns, student);
+        const m = tabMeta(ns);
+        if (st.subject === m.subject && (!!st.dict === m.dict)) return;
+        st.subject = m.subject;
+        st.dict = m.dict;
+        st.gradeId = this._pickSubjectGrade(m.subject, student);
         st.picked = {};
         st.expandedUnit = null;
         st.manual = [];
@@ -5778,6 +5958,50 @@ main.innerHTML = html;
       });
     });
 
+    document.querySelectorAll('.hw-dict-pick').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const dictSubj = st.subject === 'chinese' ? 'zh' : 'en';
+        const pool = [];
+        const seenD2 = {};
+        const collect = (sid) => {
+          if (sid == null) return;
+          Storage.getDictWrong(sid, dictSubj).forEach(x => {
+            const t = String(x.text || '').trim();
+            if (!t) return;
+            const k = sid + '|' + t;
+            if (seenD2[k]) return;
+            seenD2[k] = true;
+            pool.push(t);
+          });
+        };
+        if (st.students && st.students.length) st.students.forEach(s => collect(s.localId != null ? s.localId : s.id));
+        else collect(st.studentId);
+        const w = pool[parseInt(cb.dataset.idx)];
+        if (!w) return;
+        if (cb.checked) {
+          if (st.manual.indexOf(w) === -1) {
+            st.manual.push(w);
+            st.lastMsg = '<span style="color:#2E7D32">✅ 已加入：' + this._h(w) + '</span>';
+          }
+        } else {
+          st.manual = st.manual.filter(x => x !== w);
+        }
+        this._renderHomeworkEditorUI();
+      });
+    });
+
+    document.querySelectorAll('.hw-dict-del').forEach(a => {
+      a.addEventListener('click', () => {
+        const w = a.dataset.w;
+        const sid = parseInt(a.dataset.sid);
+        const subj = a.dataset.subj;
+        Storage.removeDictWrong(sid, subj, w);
+        st.manual = st.manual.filter(x => x !== w);
+        st.lastMsg = '<span style="color:#C62828">🗑️ 已将「' + this._h(w) + '」移出听写错词库</span>';
+        this._renderHomeworkEditorUI();
+      });
+    });
+
     document.querySelectorAll('[data-del]').forEach(a => {
       a.addEventListener('click', () => {
         const w = a.dataset.del;
@@ -5834,12 +6058,15 @@ main.innerHTML = html;
     const targets = (st.students && st.students.length)
       ? st.students.map(s => ({ name: s.name, grade: s.grade, localId: s.localId }))
       : [{ name: st.studentName, grade: st.studentGrade, localId: st.studentId }];
+    const saveSubject = st.dict ? (st.subject === 'chinese' ? 'dictZh' : 'dictEn') : st.subject;
     let anyLocal = false;
     targets.forEach(t => {
       const localStudent = t.localId != null && (Storage.getStudents() || []).some(s => String(s.id) === String(t.localId));
       if (localStudent) {
         anyLocal = true;
-        if (st.subject === 'chinese') Storage.saveHomeworkZh(t.localId, hw);
+        if (saveSubject === 'dictZh') Storage.saveHomeworkDictZh(t.localId, hw);
+        else if (saveSubject === 'dictEn') Storage.saveHomeworkDictEn(t.localId, hw);
+        else if (st.subject === 'chinese') Storage.saveHomeworkZh(t.localId, hw);
         else if (st.subject === 'math') Storage.saveHomeworkMath(t.localId, hw);
         else Storage.saveHomework(t.localId, hw);
       }
@@ -5852,7 +6079,7 @@ main.innerHTML = html;
           toName: t.name,
           toId: t.localId != null ? String(t.localId) : '',
           toGrade: String(t.grade != null ? t.grade : ''),
-          subject: st.subject,
+          subject: saveSubject,
           hw: hw,
           from: '老师',
           sentAt: new Date().toISOString()
@@ -9058,7 +9285,7 @@ if (mode === 'student') {
     });
   },
 
-  _lanGet(url) {
+  _lanGet(url, timeoutMs) {
     return new Promise((resolve) => {
       const cb = 'lan' + (Date.now()) + Math.floor(Math.random() * 1000);
       this._lanCallbacks = this._lanCallbacks || {};
@@ -9066,7 +9293,7 @@ if (mode === 'student') {
       this._lanCallbacks[cb] = (r) => { if (r && r.ok === true) { finish(r); } };
       let settled = false;
       const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
-      setTimeout(() => finish({ ok: false, err: 'timeout' }), 3000);
+      setTimeout(() => finish({ ok: false, err: 'timeout' }), (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 3000);
       if (window.AndroidLan) {
         try {
           window.AndroidLan.get(url, cb);
@@ -9291,15 +9518,39 @@ if (mode === 'student') {
     let html = '<div class="admin-section">';
     html += '<h3 style="margin:0 0 8px">👀 学生学习情况</h3>';
     html += '<div style="background:#E3F2FD;border:1px solid #90CAF9;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#1565C0">当前负责：<strong>' + gradeName + '</strong></div>';
-    html += '<p style="margin:0 0 10px;font-size:12px;color:var(--text-light)">学生平板在"学习统计"页点"📤 上报学习情况"后，这里即可查看。云端保留约 1 天，建议每天查看。</p>';
-    html += '<button class="login-btn" id="rep-refresh" style="width:100%">🔄 拉取最新学习情况</button>';
+    html += '<div style="display:flex;gap:6px">';
+    html += '<button class="login-btn" id="rep-dict-en" style="flex:1;padding:8px 0">🔤 英语听写</button>';
+    html += '<button class="login-btn" id="rep-dict-zh" style="flex:1;padding:8px 0">📝 语文听写</button>';
+    html += '</div>';
     html += '<div id="rep-list" style="margin-top:10px"></div>';
-    html += '<button class="login-btn" id="ans-refresh" style="width:100%;margin-top:8px;background:#6D4C41;border-color:#6D4C41">📥 查看学员答题结果</button>';
+    html += '<div style="margin-top:10px;font-size:12px;color:var(--text-light)">学员错题练习结果（从错题库选的错题）</div>';
+    html += '<button class="login-btn" id="ans-refresh" style="width:100%;margin-top:6px;background:#6D4C41;border-color:#6D4C41">📥 查看学员答题结果</button>';
     html += '<div id="ans-list" style="margin-top:10px"></div>';
     html += '</div>';
     container.innerHTML = html;
 
-    document.getElementById('rep-refresh').addEventListener('click', () => this._loadReports());
+    if (!this._reportsDictTop) this._reportsDictTop = { open: false, subj: null };
+    const syncTopBtn = () => {
+      [['rep-dict-en', 'en'], ['rep-dict-zh', 'zh']].forEach(pair => {
+        const b = document.getElementById(pair[0]);
+        if (!b) return;
+        const on = !!(this._reportsDictTop && this._reportsDictTop.open && this._reportsDictTop.subj === pair[1]);
+        b.style.background = on ? '#0D47A1' : '';
+        b.style.borderColor = on ? '#0D47A1' : '';
+        b.style.color = on ? '#fff' : '';
+      });
+    };
+    [['rep-dict-en', 'en'], ['rep-dict-zh', 'zh']].forEach(pair => {
+      const b = document.getElementById(pair[0]);
+      if (!b) return;
+      b.onclick = () => {
+        const t = this._reportsDictTop;
+        t.open = true; t.subj = pair[1];
+        syncTopBtn();
+        this._renderReports(this._repItems || []);
+      };
+    });
+    syncTopBtn();
     document.getElementById('ans-refresh').addEventListener('click', () => this._loadAnswers());
     this._loadReports();
     this._loadAnswers();
@@ -9343,7 +9594,8 @@ if (mode === 'student') {
           if (lan && lan.length) {
             this._renderReports(dedupByDevice(lan));
           } else {
-            list.innerHTML = '<div style="padding:20px;text-align:center;font-size:13px;color:#C62828">❌ 拉取失败：' + this._h(e.message || e) + '，请检查网络后重试</div>';
+            // 拉取失败也按本地点学员占位渲染听写条目——打开页面即可见，无需先上报
+            this._renderReports([]);
           }
         });
     });
@@ -9371,45 +9623,66 @@ if (mode === 'student') {
     });
   },
 
-  _renderReports(items) {
+  _renderReports(items) {  if (!this._reportsDictTop) this._reportsDictTop = {open:false, subj:null};
+
+    this._repItems = items;
     const list = document.getElementById('rep-list');
     if (!list) return;
     const valid = items.filter(r => r && r.deviceId && r.stats)
       .filter(r => this._gradeAllowed(r.grade));
-    if (valid.length === 0) {
-      list.innerHTML = '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text-light)">还没有学生的上报数据<br>请各学生平板：点"📊 学习统计" → 点"📤 上报学习情况"</div>';
-      return;
-    }
     const latest = {};
     valid.forEach(r => {
       const prev = latest[r.deviceId];
       if (!prev || (r.updatedAt || '') > (prev.updatedAt || '')) latest[r.deviceId] = r;
     });
     const rows = Object.keys(latest).map(k => latest[k]).filter(r => !this._isArchivedReport(r));
+    // 本地点学员占位：打开学习情况页立即可见听写条目（英语+语文），无需平板先上报
+    const rosterNow = Storage.getSiteStudents();
+    const seenNow = {};
+    rows.forEach(r => { seenNow[String(r.name) + '|' + String(r.grade)] = true; });
+    rosterNow.forEach(s => {
+      const g = Storage.getCurrentGrade(s);
+      if (!g || !this._gradeAllowed(g)) return;
+      const key = String(s.name) + '|' + String(g);
+      if (seenNow[key]) return;
+      seenNow[key] = true;
+      rows.push({ deviceId: 'loc-' + s.id, name: String(s.name), grade: String(g), updatedAt: '', stats: null, _localOnly: true });
+    });
     rows.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-CN'));
+    if (rows.length === 0) {
+      list.innerHTML = '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text-light)">还没有学生的上报数据<br>请各学生平板：点"📊 学习统计" → 点"📤 上报学习情况"</div>';
+      return;
+    }
     let html = '';
     rows.forEach(r => {
+      const localOnly = r._localOnly === true;
       const st = r.stats || {};
-      const devShort = String(r.deviceId || '').slice(-4) || '????';
+      const devShort = localOnly ? '本地点' : (String(r.deviceId || '').slice(-4) || '????');
       const when = r.updatedAt ? new Date(r.updatedAt).toLocaleString('zh-CN') : '';
-      const lastPractice = st.lastPractice ? ' · 最近练习 ' + this._fmtMonthDay(st.lastPractice) : '';
+      const lastPractice = localOnly || !st.lastPractice ? '' : ' · 最近练习 ' + this._fmtMonthDay(st.lastPractice);
       html += '<div style="background:#F5F7FA;border:1px solid #E0E0E0;border-radius:10px;padding:12px 14px;margin-bottom:10px">';
       html += '<div style="display:flex;align-items:center;gap:6px">';
       html += '<strong style="font-size:15px">' + this._h(r.name) + '</strong>';
       html += '<span style="font-size:12px;color:var(--primary)">' + this._h(r.grade || '') + '年级</span>';
-      html += '<span style="font-size:11px;color:var(--text-muted)">设备尾号 ' + devShort + '</span>';
+      if (localOnly) {
+        html += '<span style="font-size:11px;color:var(--text-muted)">本地点学员·尚未上报（听写可直接批改）</span>';
+      } else {
+        html += '<span style="font-size:11px;color:var(--text-muted)">设备尾号 ' + devShort + '</span>';
+      }
       html += '</div>';
-      html += '<div style="font-size:11px;color:var(--text-light);margin:4px 0 8px">上报 ' + when + lastPractice + '</div>';
-      html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
-      const chips = [
-        ['⚡ 积分', st.xp], ['Lv.' + (st.level || 1), '等级'], ['⭐ 星星', st.stars],
-        ['📖 已学 ' + (st.wordsLearned || 0), '词'], ['📚 ' + (st.lessons || 0), '课时'],
-        ['🔥 ' + (st.streak || 0), '天连续'], ['⏱ ' + (st.minutes || 0) + '分', '时长'], ['❌ ' + (st.wrongs || 0), '错题']
-      ];
-      chips.forEach(c => {
-        html += '<span style="background:#fff;border:1px solid #E0E0E0;border-radius:12px;padding:3px 10px;font-size:12px">' + c[0] + '</span>';
-      });
-      html += '</div>';
+      if (!localOnly) html += '<div style="font-size:11px;color:var(--text-light);margin:4px 0 8px">上报 ' + when + lastPractice + '</div>';
+      if (!localOnly) {
+        html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+        const chips = [
+          ['⚡ 积分', st.xp], ['Lv.' + (st.level || 1), '等级'], ['⭐ 星星', st.stars],
+          ['📖 已学 ' + (st.wordsLearned || 0), '词'], ['📚 ' + (st.lessons || 0), '课时'],
+          ['🔥 ' + (st.streak || 0), '天连续'], ['⏱ ' + (st.minutes || 0) + '分', '时长'], ['❌ ' + (st.wrongs || 0), '错题']
+        ];
+        chips.forEach(c => {
+          html += '<span style="background:#fff;border:1px solid #E0E0E0;border-radius:12px;padding:3px 10px;font-size:12px">' + c[0] + '</span>';
+        });
+        html += '</div>';
+      }
       const subNames2 = { english: '英语', chinese: '语文', math: '数学' };
       const subColors2 = { english: '#00BFA5', chinese: '#FF9800', math: '#2196F3' };
       const subjects = st.subjects || {};
@@ -9422,16 +9695,127 @@ if (mode === 'student') {
         });
         html += '</div>';
       }
-      html += '<div style="margin-top:8px"><button class="admin-gen-btn" style="width:100%" data-rep-arch="' + this._h(r.deviceId) + '">📥 评分归档（写入学情报告并清除本次上报）</button></div>';
+      try {
+        const roster = Storage.getStudents();
+        const loc = roster.find(s => String(s.name) === String(r.name) && String(Storage.getCurrentGrade(s)) === String(r.grade));
+        if (loc) {
+          try {
+            const dictDefs = [
+              { subj: 'en', label: '英语听写', icon: '🔊', hw: Storage.getHomeworkDictEn(loc.id), wordsOf: (hw) => this.getHomeworkWords(hw, 'english') },
+              { subj: 'zh', label: '语文听写', icon: '🔉', hw: Storage.getHomeworkDictZh(loc.id), wordsOf: (hw) => this.getHomeworkWords(hw, 'chinese') }
+            ];
+            dictDefs.forEach(dd => {
+              // 顶栏选中某科时只渲染该科听写块，不显示另一科标题栏（两者都未选中时两科都显示）
+              try {
+                const _topOn = !!(this._reportsDictTop && this._reportsDictTop.open);
+                if (_topOn && this._reportsDictTop.subj !== dd.subj) return;
+              } catch (e) {}
+              let words = [];
+              try {
+                var _tt = this._reportsDictTop || {open:false, subj:null};
+                if (_tt.open && _tt.subj === dd.subj) {
+                  words = (typeof dd.wordsOf === 'function') ? dd.wordsOf(dd.hw || []) : [];
+                  try { if (loc && loc._dictExp === undefined) loc._dictExp = {}; if (loc) loc._dictExp[dd.subj] = true; } catch(e) {}
+                }
+              } catch(e) {}
+
+              try {
+                if (dd.hw && dd.hw.manual && dd.hw.manual.length) words = dd.wordsOf(dd.hw) || [];
+              } catch (e) { words = []; }
+              try {
+                if (this._dictCollapsed && this._dictCollapsed[loc.id + '|' + dd.subj]) words = [];
+              } catch (e) {}
+              const isZh = dd.subj === 'zh';
+              const lastRes = Storage.getDictResult(loc.id, dd.subj);
+              const lastLine = (lastRes && lastRes.total > 0)
+                ? '上次成绩：' + lastRes.correct + '/' + lastRes.total + ' · 正确率 ' + lastRes.accuracy + '%' + (lastRes.date ? ' · ' + new Date(lastRes.date).toLocaleDateString('zh-CN') : '')
+                : '';
+              if (!words.length) {
+                html += '<div style="margin:8px 0;padding:8px;background:#ECEFF1;border:1px dashed #B0BEC5;border-radius:8px">';
+                html += '<div style="font-size:12px;font-weight:700;color:#546E7A">' + dd.icon + ' ' + dd.label + ' <span style="font-weight:400;color:#90A4AE">（未布置/暂无内容）</span></div>';
+                if (lastLine) html += '<div style="font-size:11px;color:#607D8B;margin-top:4px">' + lastLine + '</div>';
+                html += '</div>';
+                return;
+              }
+              const gk = loc.id + '|' + dd.subj;
+              const st = (this._dictGrade && this._dictGrade[gk]) || {};
+              html += '<div style="margin:8px 0;padding:8px;background:#E3F2FD;border:1px solid #90CAF9;border-radius:8px">';
+              html += '<div style="font-size:12px;font-weight:700;color:#0D47A1;margin-bottom:4px">' + dd.icon + ' ' + dd.label + '（' + words.length + ' 词）</div>';
+              html += '<div style="font-size:11px;color:var(--text-light);margin-bottom:6px">对照听写纸逐词点「对/错」，保存后计入听写成绩与听写错词库</div>';
+              words.forEach(w => {
+                const txt = String(isZh ? (w.zi || w.en || '') : (w.en || w.zi || '')).trim();
+                if (!txt) return;
+                const m = st[txt];
+                html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px;border-bottom:1px dashed #E3E7EF">';
+                html += '<span style="flex:1;word-break:break-all;font-weight:600">' + this._h(txt) + '</span>';
+                html += '<button class="dict-g-btn" data-sid="' + loc.id + '" data-subj="' + dd.subj + '" data-w="' + this._h(txt).replace(/"/g, '&quot;') + '" data-mark="1" style="font-size:11px;padding:2px 10px;border:1px solid #43A047;border-radius:6px;background:' + (m === true ? '#43A047' : '#fff') + ';color:' + (m === true ? '#fff' : '#43A047') + '">✓ 对</button>';
+                html += '<button class="dict-g-btn" data-sid="' + loc.id + '" data-subj="' + dd.subj + '" data-w="' + this._h(txt).replace(/"/g, '&quot;') + '" data-mark="0" style="font-size:11px;padding:2px 10px;border:1px solid #E53935;border-radius:6px;background:' + (m === false ? '#E53935' : '#fff') + ';color:' + (m === false ? '#fff' : '#E53935') + '">✗ 错</button>';
+                html += '</div>';
+              });
+              if (lastLine) html += '<div style="font-size:11px;color:#0D47A1;margin-top:5px">' + lastLine + '</div>';
+              html += '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">';
+              html += '<button class="dict-g-save" data-sid="' + loc.id + '" data-subj="' + dd.subj + '" data-total="' + words.length + '" style="flex:1;font-size:12px;padding:5px 10px;background:#0D47A1;color:#fff;border:none;border-radius:8px">💾 保存听写成绩</button>';
+              html += '<button class="dict-g-reset" data-sid="' + loc.id + '" data-subj="' + dd.subj + '" style="font-size:12px;padding:5px 10px;background:#fff;border:1px solid #B0BEC5;border-radius:8px;color:#546E7A">重置</button>';
+              html += '</div>';
+              html += '</div>';
+            });
+          } catch (e) { /* 听写成绩区块失败不影响上报卡片 */ }
+        }
+      } catch (e) {}
       html += '</div>';
     });
-    html += '<div style="padding:6px;text-align:center;font-size:11px;color:var(--text-muted)">共 ' + rows.length + ' 个学生平板上报</div>';
+    const repCount = rows.filter(x => !(x._localOnly === true)).length;
+    html += '<div style="padding:6px;text-align:center;font-size:11px;color:var(--text-muted)">' + (repCount > 0 ? ('共 ' + repCount + ' 个学生平板上报' + (rows.length > repCount ? ' · ' + (rows.length - repCount) + ' 名本地点学员' : '')) : (rows.length + ' 名本地点学员（尚无上报，听写可直接批改）')) + '</div>';
     list.innerHTML = html;
-    list.querySelectorAll('[data-rep-arch]').forEach(el => {
-      el.addEventListener('click', () => {
-        const r = rows.find(x => String(x.deviceId) === String(el.dataset.repArch));
-        if (!r) return;
-        this._gradeReport(r);
+    list.querySelectorAll('.dict-g-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const gk = btn.dataset.sid + '|' + btn.dataset.subj;
+        const w = btn.dataset.w;
+        const mk = btn.dataset.mark === '1';
+        this._dictGrade = this._dictGrade || {};
+        const st = this._dictGrade[gk] = this._dictGrade[gk] || {};
+        if (st[w] === mk) delete st[w];
+        else st[w] = mk;
+        const pair = [btn.parentNode.querySelector('[data-mark="1"]'), btn.parentNode.querySelector('[data-mark="0"]')];
+        pair.forEach(b => {
+          if (!b) return;
+          const active = st[b.dataset.w] === (b.dataset.mark === '1');
+          b.style.background = active ? (b.dataset.mark === '1' ? '#43A047' : '#E53935') : '#fff';
+          b.style.color = active ? '#fff' : (b.dataset.mark === '1' ? '#43A047' : '#E53935');
+        });
+      });
+    });
+    list.querySelectorAll('.dict-g-reset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const gk = btn.dataset.sid + '|' + btn.dataset.subj;
+        if (this._dictGrade) delete this._dictGrade[gk];
+        this._renderReports(this._repItems);
+      });
+    });
+    list.querySelectorAll('.dict-g-save').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const gk = btn.dataset.sid + '|' + btn.dataset.subj;
+        const st = (this._dictGrade && this._dictGrade[gk]) || {};
+        const marks = Object.keys(st);
+        if (!marks.length) { alert('请先逐词点「对/错」再保存。'); return; }
+        const sid = parseInt(btn.dataset.sid);
+        const subj = btn.dataset.subj;
+        const correct = marks.filter(w => st[w] === true);
+        const wrong = marks.filter(w => st[w] !== true);
+        const total = marks.length;
+        const accuracy = Math.round(correct.length / total * 100);
+        const result = { date: new Date().toISOString(), subject: subj, total, correct: correct.length, wrong: wrong.length, accuracy, wrongTexts: wrong, correctTexts: correct };
+        try {
+          Storage.saveDictResult(sid, subj, result);
+          wrong.forEach(w => Storage.addDictWrong(sid, subj, w));
+          if (this._dictGrade) delete this._dictGrade[gk];
+          try {
+            this._dictCollapsed = this._dictCollapsed || {};
+            this._dictCollapsed[gk] = true;
+          } catch (e) {}
+          alert('已保存听写成绩：' + correct.length + '/' + total + ' 正确率 ' + accuracy + '%，错词已加入听写错词库。');
+          this._renderReports(this._repItems);
+        } catch (e) { alert('保存失败：' + (e && e.message ? e.message : String(e))); }
       });
     });
   },
@@ -10094,6 +10478,29 @@ _loadAnswers() {
         ctx.fillText(subNames[k] + '  ' + ss.count + '次 · ' + ss.min + '分钟 · 正确率' + acc + '%', 36, ty + 5);
         ty += 36;
       });
+      ty += 8;
+    }
+
+    const dictSubjLabels = { en: '英语', zh: '语文' };
+    let latestDict = null;
+    ['en', 'zh'].forEach(subj => {
+      const r = Storage.getDictResult(data.student.id, subj);
+      if (r && r.total > 0 && (!latestDict || new Date(r.date).getTime() > new Date(latestDict.date).getTime())) latestDict = Object.assign({}, r, { subject: subj });
+    });
+    if (latestDict) {
+      ctx.fillStyle = '#37474F';
+      ctx.font = 'bold 19px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('最近听写', 24, ty);
+      ty += 27;
+      ctx.fillStyle = '#5C6BC0';
+      roundRect(ctx, 24, ty - 13, 552, 28, 8);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 16px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText((dictSubjLabels[latestDict.subject] || '英语') + '听写 ' + latestDict.correct + '/' + latestDict.total + ' · 正确率' + latestDict.accuracy + '% · ' + this._fmtMonthDay(new Date(latestDict.date)), 36, ty + 5);
+      ty += 36;
       ty += 8;
     }
 
@@ -11961,8 +12368,8 @@ var SUPER_PW = 'pj889988';
     const ziT = String(zi || '').trim();
     const pyRaw = String(py || '').trim();
     const pySyllables = pyRaw.split(/[\s·,，、;；]+/).map(s => s.trim()).filter(s => s && /[a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]/i.test(s));
-    // playTimes=3：字·拼音·字 共3段（听音选字用）；默认2轮：字·拼音·字·拼音（其余场景不变）
-    const playTimes = (opts && opts.playTimes === 3) ? 3 : 2;
+    // playTimes=3：字·拼音·字 共3段（听音选字用）；playTimes=1：整词只读一遍、不拼第二轮（语文听写，py 由调用方置空）；默认2轮：字·拼音·字·拼音（其余场景不变）
+    const playTimes = (opts && opts.playTimes === 3) ? 3 : ((opts && opts.playTimes === 1) ? 1 : 2);
     const parts = [];
     if (ziT) parts.push({ text: ziT, isPy: false });
     pySyllables.forEach(function(sy) { parts.push({ text: sy, isPy: true }); });
@@ -11998,8 +12405,10 @@ var SUPER_PW = 'pj889988';
         });
       } else {
         const t = p.text;
-        // 词组逐字读（2026-09-09 定案）：多字中文且本地词库（_zhWordIdx/_zhMathIdx，含 2001-3774/4001-4195 整词 ogg）均未命中时，
-        // 拆成单字逐个朗读——老师随手手动布置的任意词组都能出声；词库内多字词/单字照旧整词本地播放。过滤非汉字（标点/字母）。
+        // 词组整词连读（2026-10-07 用户定案，取代 2026-09-09 纯逐字读）：多字中文且本地词库（_zhWordIdx/_zhMathIdx，
+        // 含 2001-3774/4001-4195 整词 ogg）均未命中时——先向电脑 receiver 要局域网整词合成音频（_ttsResolveLan），
+        // 成功 → 整词一遍连读（skipUrl 即时发声链）；失败/无主机/冷却中 → 回退逐字读（不依赖 LAN，测试与无主机环境行为不变）。
+        // 词库内多字词/单字照旧整词本地播放。过滤非汉字（标点/字母）。
         const zhChars = !(self._zhWordIdx || {})[t] && !(self._zhMathIdx || {})[t] && /[\u4e00-\u9fff]/.test(t) && t.length > 1 ? (t.match(/[\u4e00-\u9fff]/g) || []) : null;
         if (zhChars && zhChars.length > 1) {
           const runChars = function(j) {
@@ -12007,7 +12416,26 @@ var SUPER_PW = 'pj889988';
             if (j >= zhChars.length) { setTimeout(function() { run(i + 1); }, gapAfter(i)); return; }
             self._ttsSpeak({ text: zhChars[j], language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { runChars(j + 1); }, 150); } });
           };
-          runChars(0);
+          if (!skipUrl && self._getSavedHost() && !(self._lanTtsCooldown && Date.now() < self._lanTtsCooldown)) {
+            const resolvePlay = function(onFail) {
+              self._ttsResolveLan(t, true).then(function(lanUrl) {
+                if (stale()) return;
+                if (lanUrl) {
+                  self._ttsSpeak({ text: t, language: 'zh-CN', volume: 1, lanUrl: lanUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gapAfter(i)); } });
+                } else { onFail(); }
+              });
+            };
+            resolvePlay(function() {
+              if (stale()) return;
+              resolvePlay(function() {
+                if (stale()) return;
+                self._lanTtsCooldown = Date.now() + 60000;
+                runChars(0);
+              });
+            });
+          } else {
+            runChars(0);
+          }
         } else {
           self._ttsSpeak({ text: t, language: 'zh-CN', volume: 1, skipUrl: skipUrl, onEnd: function() { if (stale()) return; setTimeout(function() { run(i + 1); }, gapAfter(i)); } });
         }
@@ -14854,12 +15282,13 @@ _ttsCancel() {
     }
     const lang = opts.language || 'en-US';
     const vol = Math.max(0, Math.min(1, (opts.volume != null) ? opts.volume : 1));
-    // 新发音前清空原生队列：Android TTS 默认排队播放，不清会与上一句叠加混音
-    try { if (window.AndroidBackup && typeof window.AndroidBackup.stopSpeak === 'function') { window.AndroidBackup.stopSpeak(); } } catch(e) {}
-    // 清空旧的原生回调/守卫，防止上一个音频的迟到 notifyTtsEnd 误触发新词的 finDone
-    this._ttsNativeEndCb = null;
-    this._ttsNativeFailCb = null;
-    if (this._ttsNativeGuard) { clearTimeout(this._ttsNativeGuard); this._ttsNativeGuard = null; }
+    // 新发音前清空旧音频全链（2026-10-07 加强）：_ttsCancel 一次性停原生队列（Android TTS 默认排队不清会与上一句叠加混音）
+    // + 暂停/清空残留 HTML Audio（旧 _ttsAudioEl 不停会与新音频叠播——"第二遍及后续含糊/串音"根源之一）
+    // + speechSynthesis.cancel + 清旧原生回调/守卫（防上一个音频的迟到 notifyTtsEnd 误触发新词 finDone）。
+    try { this._ttsCancel(); } catch (e) {}
+    // 残留的 _lanTtsUrl 必须每次重置：词库内词命中后若本地 ogg 播放失败回退 chainNet，会复用上一个词的
+    // LAN 地址（id 与文本严格绑定）→ 播出完全不相关音频。词库内词不经过 resolve 分支，只能在入口置空。
+    this._lanTtsUrl = null;
     const self = this;
     const mySeq = (this._ttsSeq = (this._ttsSeq || 0) + 1);
     const alive = function() { return self._ttsSeq === mySeq; };
@@ -14897,9 +15326,19 @@ _ttsCancel() {
               const afterLan = function() {
                 if (!alive()) return;
                 if (Date.now() > (self._urlHangUntil || 0)) {
+                  const _uStart = Date.now();
                   self._ttsTryJavaUrl(urls[0], vol, function() {
                     if (alive()) self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
-                  }, finDone, urlTimeout);
+                  }, function() {
+                    if (!alive()) return;
+                    // 有道限流会返回 200 但仅 26ms 无效音频（听感=短暂杂音/含糊）→ 转原生 TTS（对齐 skipUrl 链既有防护）
+                    if (Date.now() - _uStart < 300) {
+                      try { self._ttsDiag.push('URL过短→原生'); } catch(e) {}
+                      self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
+                    } else {
+                      finDone();
+                    }
+                  }, urlTimeout);
                 } else {
                   self._ttsTryNative(text, lang, vol, trySynth, finDone, 8000);
                 }
@@ -15005,12 +15444,18 @@ _ttsCancel() {
       }
       // 词库/整句库未命中 → 先向电脑 receiver 要局域网合成音频；拿到则链上优先播放（播完即终止），
       // 拿不到则把 _lanTtsUrl 置空，走既有 有道→原生→合成 链（skipUrl 的每日必练即时路径不查 LAN）
+      if (opts.lanUrl) {
+        // _zhSpeakSeq 整词连读已解析好本词的 LAN URL → 直接用（跳过重新解析与置空，勿丢）
+        self._lanTtsUrl = opts.lanUrl;
+        chainNet();
+        return;
+      }
       const lh = self._getSavedHost();
-      if (lh && !skipUrl && !self._lanTtsCooldown) {
+      if (lh && !skipUrl && !(self._lanTtsCooldown && Date.now() < self._lanTtsCooldown)) {
         self._ttsResolveLan(text, zh).then(function(lanUrl) {
           if (!alive()) return;
           self._lanTtsUrl = lanUrl;
-          self._lanTtsCooldown = lanUrl ? 0 : Date.now() + 300000;
+          self._lanTtsCooldown = lanUrl ? 0 : Date.now() + 60000;
           chainNet();
         });
       } else {
@@ -15036,7 +15481,7 @@ _ttsCancel() {
     if (!host) { return Promise.resolve(null); }
     const url = 'http://' + host + ':8899/tts?text=' + encodeURIComponent(text) + '&zh=' + (zh ? '1' : '0');
     return new Promise((resolve) => {
-      this._lanGet(url).then((r) => {
+      this._lanGet(url, 8000).then((r) => {
         let j = r || null;
         if (j && typeof j.body === 'string') {
           try { j = JSON.parse(j.body); } catch (e) { j = null; }
@@ -15050,6 +15495,11 @@ _ttsCancel() {
     const self = this;
     const mySeq = this._ttsSeq;
     const alive = function() { return self._ttsSeq === mySeq; };
+    // 只结算一次：onerror 与 play() Promise reject 常同时触发（文件缺失/解码失败），
+    // 双发 onFail 会造成 chainNet 二次执行 → 同段 URL 播两遍/守卫泄漏（勿回退）
+    let settled = false;
+    const doEnd = function() { if (settled) return; settled = true; if (alive()) onEnd(); };
+    const doFail = function() { if (settled) return; settled = true; try { self._ttsDiag.push('本地失败'); } catch(e) {} if (alive()) onFail(); };
     const Lm = /^sounds\/letters\/([A-Za-z0-9])\.wav$/i.exec(path);
     if (Lm && window.AndroidBackup && typeof window.AndroidBackup.playAssetSound === 'function') {
       try {
@@ -15066,15 +15516,15 @@ _ttsCancel() {
       const el = new Audio(path);
       this._ttsAudioEl = el;
       el.volume = vol;
-      var guard = setTimeout(function() { try { el.pause(); } catch(e) {} if (alive()) onFail(); }, 3000);
+      var guard = setTimeout(function() { try { el.pause(); } catch(e) {} doFail(); }, 3000);
       el.onplaying = function() { clearTimeout(guard); };
-      el.onended = function() { clearTimeout(guard); try { self._ttsDiag.push('本地OK'); } catch(e) {} if (alive()) onEnd(); };
-      el.onerror = function() { clearTimeout(guard); try { self._ttsDiag.push('本地失败'); } catch(e) {} if (alive()) onFail(); };
+      el.onended = function() { clearTimeout(guard); try { self._ttsDiag.push('本地OK'); } catch(e) {} doEnd(); };
+      el.onerror = function() { clearTimeout(guard); doFail(); };
       const p = el.play();
       if (p && typeof p.catch === 'function') {
-        p.catch(function() { clearTimeout(guard); try { self._ttsDiag.push('本地失败'); } catch(e) {} if (alive()) onFail(); });
+        p.catch(function() { clearTimeout(guard); doFail(); });
       }
-    } catch (e) { try { self._ttsDiag.push('本地失败'); } catch(e2) {} if (alive()) onFail(); }
+    } catch (e) { doFail(); }
   },
 
   _ttsTryUrls(urls, vol, onAllFail, onDone) {
@@ -15095,14 +15545,38 @@ _ttsCancel() {
       const el = new Audio();
       this._ttsAudioEl = el;
       el.volume = vol;
-      var guard = setTimeout(function() { try { el.pause(); } catch(e) {} tryNext(); }, 2000);
+      // 单结算：onerror 与 play() Promise reject 常同时触发（实测整链会跑两遍），勿回退
+      const uStart = Date.now();
+      let settled = false;
+      const doFail = function() {
+        if (settled) return;
+        settled = true;
+        clearTimeout(guard);
+        if (!alive()) return;
+        tryNext();
+      };
+      const doDone = function() {
+        if (settled) return;
+        settled = true;
+        clearTimeout(guard);
+        if (!alive()) return;
+        // 有道限流 200 但仅 26ms 无效音频（听感=短暂杂音后静默）→ 网页路径同样判短转后备链
+        if (Date.now() - uStart < 300) {
+          try { self._ttsDiag.push('URL过短→原生'); } catch(e) {}
+          tryNext();
+          return;
+        }
+        try { self._ttsDiag.push('网络OK'); } catch(e) {}
+        onDone();
+      };
+      var guard = setTimeout(function() { try { el.pause(); } catch(e) {} doFail(); }, 2000);
       el.onplaying = function() { clearTimeout(guard); };
-      el.onended = function() { clearTimeout(guard); try { self._ttsDiag.push('网络OK'); } catch(e) {} if (alive()) onDone(); };
-      el.onerror = function() { clearTimeout(guard); tryNext(); };
+      el.onended = function() { doDone(); };
+      el.onerror = function() { doFail(); };
       el.src = url;
       const p = el.play();
       if (p && typeof p.catch === 'function') {
-        p.catch(function() { clearTimeout(guard); tryNext(); });
+        p.catch(function() { doFail(); });
       }
     } catch (e) { tryNext(); }
   },
@@ -16164,6 +16638,8 @@ _ttsCancel() {
         const hw = d.hw;
         if (d.subject === 'chinese') Storage.saveHomeworkZh(sid, hw);
         else if (d.subject === 'math') Storage.saveHomeworkMath(sid, hw);
+        else if (d.subject === 'dictZh') Storage.saveHomeworkDictZh(sid, hw);
+        else if (d.subject === 'dictEn') Storage.saveHomeworkDictEn(sid, hw);
         else Storage.saveHomework(sid, hw);
         applied++;
         try { this._tasksLog('作业 ' + d.subject + '→' + d.toName + ' 勾选' + ((d.hw.wordKeys || []).length) + ' 手动' + ((d.hw.manual || []).length) + ''); } catch (e) {}
@@ -16997,4 +17473,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20260916-1750';
+window.__SERVER_VER = '20261008-1751';
