@@ -23,7 +23,7 @@ $ttsMaxCache = 80MB
 # receiver.ps1 自身版本号（自举更新用）。每次对 receiver.ps1 做了需要分发到公司电脑的改动，
 # 就把它 +1（日期格式，如 20260902-1 → 20260902-2）。开发机云端同步与自举均被 no-cloud-sync.dev 保护，
 # 但 publish_update.ps1 会上传并随 version.json 下发；公司电脑仅在 版本更新 && hash 不同 时自替换重启。
-$script:SelfVer = '20260916-2'
+$script:SelfVer = '20261009-1'
 
 # GitHub 令牌位置：优先“工具\.pj_update_token”（随工具\文件夹复制携带，防遗漏），没有则回退用户目录 .pj_update_token
 function Get-TokenPath {
@@ -3316,32 +3316,81 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
                 $dFile = Join-Path $dDir "$safeName.json"
                 $newItems = @($json.items)
                 $removed = @($json.removed)
-                $merged = @()
+                # 读旧 items + 旧 tombstones（向后兼容：旧文件无 removed）
+                $oldItems = @()
+                $tombMap = @{}
                 try {
                     if (Test-Path $dFile) {
                         $parsed = [System.IO.File]::ReadAllText($dFile) | ConvertFrom-Json
-                        if ($null -ne $parsed -and $null -ne $parsed.items) { $merged = @($parsed.items) }
+                        if ($null -ne $parsed -and $null -ne $parsed.items) { $oldItems = @($parsed.items) }
+                        if ($null -ne $parsed -and $null -ne $parsed.removed) {
+                            foreach ($tm in @($parsed.removed)) {
+                                if ($null -eq $tm) { continue }
+                                if ([string]::IsNullOrEmpty([string]$tm.subj) -or [string]::IsNullOrEmpty([string]$tm.text)) { continue }
+                                $tombMap[(([string]$tm.subj) + '|' + ([string]$tm.text))] = [string]$tm.removedAt
+                            }
+                        }
                     }
                 } catch {}
-                if ($merged.Count -gt 0) {
-                    $keyMap = @{}
-                    foreach ($it in $merged) { $keyMap[("" + [string]$it.subj + '|' + [string]$it.text)] = $it }
-                    foreach ($it in $newItems) {
-                        if ($null -eq $it -or $null -eq $it.subj -or [string]::IsNullOrEmpty([string]$it.text)) { continue }
-                        $keyMap[("" + [string]$it.subj + '|' + [string]$it.text)] = $it
-                    }
-                    $merged = @($keyMap.Values)
-                } else {
-                    foreach ($it in $newItems) {
-                        if ($null -eq $it -or $null -eq $it.subj -or [string]::IsNullOrEmpty([string]$it.text)) { continue }
-                        $merged += , $it
-                    }
+                $nowIso = (Get-Date).ToUniversalTime().ToString('o')
+                # 合并 items（新覆盖旧，键 subj|text）
+                $keyMap = @{}
+                foreach ($it in $oldItems) {
+                    if ($null -eq $it -or $null -eq $it.subj -or [string]::IsNullOrEmpty([string]$it.text)) { continue }
+                    $keyMap[(([string]$it.subj) + '|' + ([string]$it.text))] = $it
                 }
-                if ($removed.Count -gt 0) {
-                    $merged = @($merged | Where-Object { $removed -notcontains (([string]$_.subj) + '|' + ([string]$_.text)) })
+                foreach ($it in $newItems) {
+                    if ($null -eq $it -or $null -eq $it.subj -or [string]::IsNullOrEmpty([string]$it.text)) { continue }
+                    $keyMap[(([string]$it.subj) + '|' + ([string]$it.text))] = $it
                 }
+                # 本次 removed 落墓碑（兼容字符串 'subj|text' 与对象 {subj,text,removedAt}）
+                foreach ($rm in $removed) {
+                    if ($null -eq $rm) { continue }
+                    if ($rm -is [string]) { $rk = [string]$rm }
+                    else {
+                        if ($null -eq $rm.subj -or $null -eq $rm.text) { continue }
+                        $rk = ([string]$rm.subj) + '|' + ([string]$rm.text)
+                    }
+                    if (([string]$rk).IndexOf('|') -lt 1) { continue }
+                    $ratt = ''
+                    if (($rm -isnot [string]) -and ($null -ne $rm.removedAt)) { $ratt = [string]$rm.removedAt }
+                    if ([string]::IsNullOrEmpty($ratt)) { $ratt = $nowIso }
+                    $tombMap[[string]$rk] = $ratt
+                }
+                # 时间戳仲裁：item 与墓碑同键时，仅当 item.addedAt 严格新于墓碑 removedAt 才保留（合法重加）
+                $merged = @()
+                foreach ($kv in $keyMap.GetEnumerator()) {
+                    $k = [string]$kv.Key
+                    if ($tombMap.ContainsKey($k)) {
+                        $ia = ''
+                        if ($null -ne $kv.Value.addedAt) { $ia = [string]$kv.Value.addedAt }
+                        $ld = [datetime]::MinValue
+                        $rd = [datetime]::MaxValue
+                        $lok = $false
+                        $rok = $false
+                        try { $ld = [datetime]::Parse($ia, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal); $lok = $true } catch {}
+                        try { $rd = [datetime]::Parse([string]$tombMap[$k], [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal); $rok = $true } catch {}
+                        if ($lok -and $rok) {
+                            if ($ld -gt $rd) { $tombMap.Remove($k) } else { continue }
+                        } elseif ($lok -and -not $rok) {
+                            $tombMap.Remove($k)
+                        } else {
+                            continue
+                        }
+                    }
+                    $merged += , $kv.Value
+                }
+                $merged = @($merged | Sort-Object -Property @{Expression={[string]$_.subj}}, @{Expression={[string]$_.text}})
+                # 墓碑按 removedAt 降序保留最新 500 条
+                $tombList = @()
+                foreach ($tk2 in @($tombMap.Keys)) {
+                    $bar2 = ([string]$tk2).IndexOf('|')
+                    if ($bar2 -lt 1) { continue }
+                    $tombList += , @{ subj = ([string]$tk2).Substring(0, $bar2); text = ([string]$tk2).Substring($bar2 + 1); removedAt = $tombMap[$tk2] }
+                }
+                $tombList = @($tombList | Sort-Object -Property removedAt -Descending | Select-Object -First 500)
                 try {
-                    $out = @{ name = $student; grade = $grade; items = $merged } | ConvertTo-Json -Depth 6 -Compress
+                    $out = @{ name = $student; grade = $grade; items = $merged; removed = $tombList } | ConvertTo-Json -Depth 6 -Compress
                     [System.IO.File]::WriteAllText($dFile, $out, (New-Object System.Text.UTF8Encoding $true))
                 } catch { Log ("error dictwrong write: {0}" -f $_.Exception.Message) }
                 Send-Response $stream '200 OK' 'application/json' (@{ ok = $true; count = $merged.Count } | ConvertTo-Json -Compress)
@@ -3355,11 +3404,12 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
             } else {
                 $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
                 $dFile = Join-Path $updDir "dictwrong\$safeName.json"
-                $result = @{ student = $student; items = @() }
+                $result = @{ student = $student; items = @(); removed = @() }
                 try {
                     if (Test-Path $dFile) {
                         $parsed = [System.IO.File]::ReadAllText($dFile) | ConvertFrom-Json
                         if ($null -ne $parsed -and $null -ne $parsed.items) { $result.items = @($parsed.items) }
+                        if ($null -ne $parsed -and $null -ne $parsed.removed) { $result.removed = @($parsed.removed) }
                     }
                 } catch {}
                 Send-Response $stream '200 OK' 'application/json' ($result | ConvertTo-Json -Depth 6 -Compress)
