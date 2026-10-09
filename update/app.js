@@ -5124,7 +5124,7 @@ main.innerHTML = html;
             if (rep.lastPractice && !(data.progress && data.progress.lastPracticeDate)) { data.progress = data.progress || {}; data.progress.lastPracticeDate = rep.lastPractice; }
           }
         }
-        this._generateShareImage(data, sessions, totalMin, name, previewDiv, wwc);
+        this._generateShareImage(data, sessions, totalMin, name, previewDiv, wwc, false, sid);
       });
     });
   },
@@ -5579,6 +5579,7 @@ main.innerHTML = html;
       manual: prev.manual || [],
       manualNotInBank: prev.manualNotInBank || {}
     };
+    this._pullDictWrongViews(this._hwEditor.students.map(function(s) { return { name: s.name, sid: s.localId }; }));
     this._renderHomeworkEditorUI();
   },
 
@@ -5613,6 +5614,7 @@ main.innerHTML = html;
       manualNotInBank: prev.manualNotInBank || {}
     };
 
+    this._pullDictWrongViews([{ name: student.name, sid: localId }]);
     this._renderHomeworkEditorUI();
   },
 
@@ -5996,6 +5998,12 @@ main.innerHTML = html;
         const sid = parseInt(a.dataset.sid);
         const subj = a.dataset.subj;
         Storage.removeDictWrong(sid, subj, w);
+        const stu = Storage.getStudents().find(function(s) { return String(s.id) === String(sid); });
+        if (stu) {
+          const sGrade = String(stu.grade || Storage.getCurrentGrade(stu) || '');
+          this._queueDictWrongRemoved(String(stu.name), sGrade, subj, w);
+          this._pushDictWrongFor(String(stu.name), sGrade, sid);
+        }
         st.manual = st.manual.filter(x => x !== w);
         st.lastMsg = '<span style="color:#C62828">🗑️ 已将「' + this._h(w) + '」移出听写错词库</span>';
         this._renderHomeworkEditorUI();
@@ -9808,6 +9816,8 @@ if (mode === 'student') {
         try {
           Storage.saveDictResult(sid, subj, result);
           wrong.forEach(w => Storage.addDictWrong(sid, subj, w));
+          const stu = Storage.getStudents().find(function(s) { return String(s.id) === String(sid); });
+          if (stu) this._pushDictWrongFor(String(stu.name), String(stu.grade || Storage.getCurrentGrade(stu) || ''), sid);
           if (this._dictGrade) delete this._dictGrade[gk];
           try {
             this._dictCollapsed = this._dictCollapsed || {};
@@ -10364,10 +10374,10 @@ _loadAnswers() {
     const data = Storage.getStudentData(studentId);
     const sessions = data.sessions.filter(s => s.completed);
     let totalMin = 0; sessions.forEach(s => { totalMin += Math.max(1, Math.round((s.duration || 0) / 60)); });
-    this._generateShareImage(data, sessions, totalMin);
+    this._generateShareImage(data, sessions, totalMin, undefined, undefined, undefined, false, studentId);
   },
 
-  _generateShareImage(data, sessions, totalMin, displayName, previewDiv, wrongWordCount, noWechatShare) {
+  _generateShareImage(data, sessions, totalMin, displayName, previewDiv, wrongWordCount, noWechatShare, targetSid) {
     let name = displayName || (this.adminViewingStudent ? this.adminViewingStudent.name : '');
     if (!name) {
       try {
@@ -10413,17 +10423,18 @@ _loadAnswers() {
     const completedUnits = Object.keys(data.progress.completedLessons).length;
     const dailyKeys = Object.keys(dailyMap).sort().reverse().slice(0, 7);
 
-    ctx.fillStyle = '#00BFA5';
-    ctx.fillRect(0, 0, 600, 108);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 33px "PingFang SC","Microsoft YaHei",sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('培基智多星学习系统 · 学情报告', 300, 69);
-
-    ctx.fillStyle = '#263238';
-    ctx.font = 'bold 27px "PingFang SC","Microsoft YaHei",sans-serif';
-    ctx.fillText(name, 300, 150);
-
+    const dictSid = (targetSid != null && targetSid !== '') ? targetSid : ((data && data.student && data.student.id != null) ? data.student.id : null);
+    const dictSubjLabels = { en: '英语', zh: '语文' };
+    const dictRows = [];
+    if (dictSid != null) {
+      ['en', 'zh'].forEach(subj => {
+        try {
+          const r = Storage.getDictResult(dictSid, subj);
+          if (r && r.total > 0) dictRows.push({ subj: subj, r: r });
+        } catch (e) {}
+      });
+    }
+    const dictWrongLines = dictRows.reduce((n, row) => n + ((row.r.wrongTexts && row.r.wrongTexts.length) ? 1 : 0), 0);
     const items = [
       { v: (data.progress.totalXP || 0) + '分', l: '总得分' },
       { v: 'Lv.' + (data.progress.level || 1), l: '等级' },
@@ -10439,6 +10450,26 @@ _loadAnswers() {
       { v: (typeStats.hearChoose ? typeStats.hearChoose.count : 0) + '/' + (typeStats.hearSpell ? typeStats.hearSpell.count : 0), l: '听选/听拼' },
     ];
     const cols = 3, cw = 172, ch = 81, sy = 180, gx = 22, gy = 15;
+    const activeSubs = Object.keys(subjectStats).filter(k => subjectStats[k].count > 0);
+    const typeRows = Math.ceil(Object.keys(typeStats).length / 3);
+    let needH = sy + Math.ceil(items.length / cols) * (ch + gy) + 20;
+    if (activeSubs.length > 0) needH += 27 + activeSubs.length * 36 + 8;
+    if (dictRows.length > 0) needH += 27 + dictRows.length * 36 + dictWrongLines * 22 + 8;
+    needH += 27 + typeRows * 24 + 36;
+    needH += 24 + dailyKeys.length * 27 + 60;
+    canvas.height = Math.max(1180, Math.ceil(needH));
+
+    ctx.fillStyle = '#00BFA5';
+    ctx.fillRect(0, 0, 600, 108);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 33px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('培基智多星学习系统 · 学情报告', 300, 69);
+
+    ctx.fillStyle = '#263238';
+    ctx.font = 'bold 27px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.fillText(name, 300, 150);
+
     const sx = (600 - (cols * cw + (cols - 1) * gx)) / 2;
     items.forEach((item, i) => {
       const col = i % cols, row = Math.floor(i / cols);
@@ -10459,7 +10490,6 @@ _loadAnswers() {
 
     const subNames = { english: '英语', chinese: '语文', math: '数学' };
     const subColors = { english: '#00BFA5', chinese: '#FF9800', math: '#2196F3' };
-    const activeSubs = Object.keys(subjectStats).filter(k => subjectStats[k].count > 0);
     if (activeSubs.length > 0) {
       ctx.fillStyle = '#37474F';
       ctx.font = 'bold 19px "PingFang SC","Microsoft YaHei",sans-serif';
@@ -10481,26 +10511,31 @@ _loadAnswers() {
       ty += 8;
     }
 
-    const dictSubjLabels = { en: '英语', zh: '语文' };
-    let latestDict = null;
-    ['en', 'zh'].forEach(subj => {
-      const r = Storage.getDictResult(data.student.id, subj);
-      if (r && r.total > 0 && (!latestDict || new Date(r.date).getTime() > new Date(latestDict.date).getTime())) latestDict = Object.assign({}, r, { subject: subj });
-    });
-    if (latestDict) {
+    if (dictRows.length > 0) {
       ctx.fillStyle = '#37474F';
       ctx.font = 'bold 19px "PingFang SC","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('最近听写', 24, ty);
+      ctx.fillText('听写成绩', 24, ty);
       ty += 27;
-      ctx.fillStyle = '#5C6BC0';
-      roundRect(ctx, 24, ty - 13, 552, 28, 8);
-      ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 16px "PingFang SC","Microsoft YaHei",sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText((dictSubjLabels[latestDict.subject] || '英语') + '听写 ' + latestDict.correct + '/' + latestDict.total + ' · 正确率' + latestDict.accuracy + '% · ' + this._fmtMonthDay(new Date(latestDict.date)), 36, ty + 5);
-      ty += 36;
+      dictRows.forEach(row => {
+        const r = row.r;
+        ctx.fillStyle = row.subj === 'zh' ? '#FF9800' : '#5C6BC0';
+        roundRect(ctx, 24, ty - 13, 552, 28, 8);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 16px "PingFang SC","Microsoft YaHei",sans-serif';
+        ctx.textAlign = 'left';
+        const dt = r.date ? this._fmtMonthDay(new Date(r.date)) : '';
+        ctx.fillText(dictSubjLabels[row.subj] + '听写 ' + r.correct + '/' + r.total + ' · 正确率' + r.accuracy + '%' + (dt ? ' · ' + dt : ''), 36, ty + 5);
+        ty += 36;
+        if (r.wrongTexts && r.wrongTexts.length) {
+          ctx.fillStyle = '#546E7A';
+          ctx.font = '14px "PingFang SC","Microsoft YaHei",sans-serif';
+          ctx.textAlign = 'left';
+          ctx.fillText('错词：' + r.wrongTexts.slice(0, 6).join('、') + (r.wrongTexts.length > 6 ? ' 等' : ''), 36, ty + 5);
+          ty += 22;
+        }
+      });
       ty += 8;
     }
 
@@ -10518,6 +10553,12 @@ _loadAnswers() {
       tx += 195;
       if (tx > 450) { tx = 24; tty += 24; }
     });
+    if (Object.keys(typeStats).length === 0) {
+      ctx.fillStyle = '#90A4AE';
+      ctx.font = '15px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('暂无练习记录', 24, tty);
+    }
 
     const dy = tty + 36;
     ctx.fillStyle = '#37474F';
@@ -10541,6 +10582,12 @@ _loadAnswers() {
       ctx.fillText(mins + '分钟', 150 + barW + 6, dty + 4);
       dty += 27;
     });
+    if (dailyKeys.length === 0) {
+      ctx.fillStyle = '#90A4AE';
+      ctx.font = '15px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('近7天暂无学习记录', 24, dty + 4);
+    }
 
     const by = canvas.height - 45;
     ctx.fillStyle = '#607D8B';
@@ -10557,10 +10604,10 @@ _loadAnswers() {
     var fileName = name + '_学情报告.png';
     var preview = previewDiv || document.getElementById('share-img-preview');
     if (!preview) return;
+    var shareUrl = URL.createObjectURL(shareBlob);
     preview.innerHTML = '<a class="share-img-link" href="' + shareUrl + '" download="' + fileName + '" style="display:block;text-decoration:none"><img src="' + img + '" style="max-width:100%;border-radius:12px;box-shadow:var(--shadow);display:block"></a>' + (noWechatShare ? '' : '<div style="text-align:center;margin-top:8px"><button class="share-share-btn" style="padding:10px 24px;border:none;border-radius:10px;background:#07C160;color:#fff;font-size:15px;cursor:pointer">分享到微信</button></div>') + '<p id="share-status" style="margin:6px;font-size:12px;color:var(--text-light)"></p>';
     var statusEl = preview.querySelector('#share-status');
     var st = function(t) { if (statusEl) { try { statusEl.textContent = t; } catch(e) {} } };
-    var shareUrl = URL.createObjectURL(shareBlob);
 
     function doShare() {
       if (window.AndroidShare && window.AndroidShare.saveAndShareImage) {
@@ -15904,6 +15951,94 @@ _ttsCancel() {
       .catch(() => {});
   },
 
+  _pushDictWrongFor(studName, grade, sid) {
+    const host = this._getSavedHost();
+    if (!host || studName == null || sid == null) return Promise.resolve();
+    const items = [];
+    ['en', 'zh'].forEach(s => {
+      Storage.getDictWrong(sid, s).forEach(x => {
+        const t = String(x.text || '').trim();
+        if (t) items.push({ subj: s, text: t, addedAt: x.addedAt || new Date().toISOString() });
+      });
+    });
+    const removed = [];
+    try {
+      const q = JSON.parse(localStorage.getItem('pjyx_dictremoved') || '{}');
+      const entry = q[studName + '||' + (grade || '')];
+      if (Array.isArray(entry)) entry.forEach(c => { if (String(c).indexOf('|') > 0) removed.push(String(c)); });
+    } catch (e) {}
+    const body = JSON.stringify({ name: studName, grade: grade || '', items: items, removed: removed });
+    return this._lanPost('http://' + host + ':8899/dictwrong', body)
+      .then(r => {
+        if (r && r.ok) {
+          try {
+            const q = JSON.parse(localStorage.getItem('pjyx_dictremoved') || '{}');
+            delete q[studName + '||' + (grade || '')];
+            localStorage.setItem('pjyx_dictremoved', JSON.stringify(q));
+          } catch (e2) {}
+        }
+        return r;
+      })
+      .catch((e) => ({ ok: false, err: String(e) }));
+  },
+
+  _queueDictWrongRemoved(studName, grade, subj, text) {
+    if (!studName || text == null) return;
+    const key = studName + '||' + (grade || '');
+    const comp = subj + '|' + String(text).trim();
+    let q = {};
+    try { q = JSON.parse(localStorage.getItem('pjyx_dictremoved') || '{}'); } catch (e) {}
+    const arr = Array.isArray(q[key]) ? q[key] : [];
+    if (arr.indexOf(comp) < 0) arr.push(comp);
+    q[key] = arr;
+    localStorage.setItem('pjyx_dictremoved', JSON.stringify(q));
+  },
+
+  _pullDictWrongFor(studName, localSid) {
+    const host = this._getSavedHost();
+    if (!host || studName == null || localSid == null) return Promise.resolve(false);
+    return this._lanGet('http://' + host + ':8899/dictwrong?student=' + encodeURIComponent(String(studName)))
+      .then(r => {
+        if (!r || !r.ok || !r.body) return false;
+        let data = null;
+        try { data = JSON.parse(r.body); } catch (e) {}
+        if (!data || !Array.isArray(data.items)) return false;
+        if (!data.items.length) return false;
+        let changed = false;
+        ['en', 'zh'].forEach(s => {
+          const localMap = {};
+          Storage.getDictWrong(localSid, s).forEach(x => { if (x) localMap[String(x.text).trim()] = x; });
+          let dirty = false;
+          data.items.forEach(it => {
+            if (!it || String(it.subj) !== s) return;
+            const t = String(it.text || '').trim();
+            if (!t || localMap[t]) return;
+            localMap[t] = { text: t, addedAt: it.addedAt || new Date().toISOString() };
+            dirty = true;
+          });
+          if (dirty) {
+            Storage.saveDictWrong(localSid, s, Object.values(localMap).filter(x => x && x.text));
+            changed = true;
+          }
+        });
+        return changed;
+      })
+      .catch(() => false);
+  },
+
+  _pullDictWrongViews(pulls) {
+    if (this._hwDictPulling) return Promise.resolve(false);
+    const list = (pulls || []).filter(p => p && p.name != null && p.sid != null);
+    if (!list.length) return Promise.resolve(false);
+    this._hwDictPulling = true;
+    return Promise.all(list.map(p => this._pullDictWrongFor(p.name, p.sid)))
+      .then(() => {
+        this._hwDictPulling = false;
+        if (this._hwEditor) this._renderHomeworkEditorUI();
+      })
+      .catch(() => { this._hwDictPulling = false; });
+  },
+
   _pushAccum() {
     const host = this._getSavedHost();
     if (!host || !this.currentStudent) return Promise.resolve();
@@ -17442,7 +17577,7 @@ const body = {
         const studentList = Storage.getStudents();
         const self = studentList.find(st => st.id === sid);
         const wwc = Storage.getWrongWords().length;
-        this._generateShareImage(data, cs, totalMin, self ? self.name : '', null, wwc, true);
+        this._generateShareImage(data, cs, totalMin, self ? self.name : '', null, wwc, true, sid);
       });
     }
 
@@ -17473,4 +17608,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20261008-1751';
+window.__SERVER_VER = '20261009-1752';
