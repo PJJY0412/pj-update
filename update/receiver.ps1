@@ -659,7 +659,7 @@ function Sync-WrongAccumToCloud {
         }
 
         $pushed = 0
-        foreach ($subDir in @('wrongbank', 'accum')) {
+        foreach ($subDir in @('wrongbank', 'accum', 'dictwrong')) {
             $dir = Join-Path $updDir $subDir
             if (-not (Test-Path $dir)) { continue }
             Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object {
@@ -826,8 +826,8 @@ function Remove-StudentData([string]$name, [string]$grade) {
             }
         } catch { }
     }
-    # 7) 错题本 + 日积月累 JSON（电脑端跨设备同步数据源）
-    foreach ($sub in @('wrongbank', 'accum')) {
+    # 7) 错题本 + 日积月累 + 听写错词 JSON（电脑端跨设备同步数据源）
+    foreach ($sub in @('wrongbank', 'accum', 'dictwrong')) {
         $subDir = Join-Path $updDir $sub
         if (Test-Path $subDir) {
             $target = Join-Path $subDir "$safe.json"
@@ -3263,6 +3263,70 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
                 try {
                     if (Test-Path $bankFile) {
                         $parsed = [System.IO.File]::ReadAllText($bankFile) | ConvertFrom-Json
+                        if ($null -ne $parsed -and $null -ne $parsed.items) { $result.items = @($parsed.items) }
+                    }
+                } catch {}
+                Send-Response $stream '200 OK' 'application/json' ($result | ConvertTo-Json -Depth 6 -Compress)
+            }
+        }
+        elseif ($method -eq 'POST' -and $pathOnly -eq '/dictwrong') {
+            $body = Read-Body $stream $contentLength
+            $json = $null
+            try { $json = $body | ConvertFrom-Json } catch {}
+            if ($null -eq $json -or [string]::IsNullOrEmpty([string]$json.name)) {
+                Send-Response $stream '400 Bad Request' 'application/json' '{"ok":false,"err":"name missing"}'
+            } else {
+                $student = [string]$json.name
+                $grade = if ($null -ne $json.grade) { [string]$json.grade } else { '' }
+                $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
+                $dDir = Join-Path $updDir 'dictwrong'
+                try { New-Item -ItemType Directory -Path $dDir -Force | Out-Null } catch {}
+                $dFile = Join-Path $dDir "$safeName.json"
+                $newItems = @($json.items)
+                $removed = @($json.removed)
+                $merged = @()
+                try {
+                    if (Test-Path $dFile) {
+                        $parsed = [System.IO.File]::ReadAllText($dFile) | ConvertFrom-Json
+                        if ($null -ne $parsed -and $null -ne $parsed.items) { $merged = @($parsed.items) }
+                    }
+                } catch {}
+                if ($merged.Count -gt 0) {
+                    $keyMap = @{}
+                    foreach ($it in $merged) { $keyMap[("" + [string]$it.subj + '|' + [string]$it.text)] = $it }
+                    foreach ($it in $newItems) {
+                        if ($null -eq $it -or $null -eq $it.subj -or [string]::IsNullOrEmpty([string]$it.text)) { continue }
+                        $keyMap[("" + [string]$it.subj + '|' + [string]$it.text)] = $it
+                    }
+                    $merged = @($keyMap.Values)
+                } else {
+                    foreach ($it in $newItems) {
+                        if ($null -eq $it -or $null -eq $it.subj -or [string]::IsNullOrEmpty([string]$it.text)) { continue }
+                        $merged += , $it
+                    }
+                }
+                if ($removed.Count -gt 0) {
+                    $merged = @($merged | Where-Object { $removed -notcontains (([string]$_.subj) + '|' + ([string]$_.text)) })
+                }
+                try {
+                    $out = @{ name = $student; grade = $grade; items = $merged } | ConvertTo-Json -Depth 6 -Compress
+                    [System.IO.File]::WriteAllText($dFile, $out, (New-Object System.Text.UTF8Encoding $true))
+                } catch { Log ("error dictwrong write: {0}" -f $_.Exception.Message) }
+                Send-Response $stream '200 OK' 'application/json' (@{ ok = $true; count = $merged.Count } | ConvertTo-Json -Compress)
+            }
+        }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/dictwrong') {
+            $student = ''
+            if ($query -match 'student=([^&]*)') { $student = [System.Uri]::UnescapeDataString($Matches[1]) }
+            if ([string]::IsNullOrEmpty($student)) {
+                Send-Response $stream '400 Bad Request' 'application/json' '{"ok":false,"err":"student param missing"}'
+            } else {
+                $safeName = [regex]::Replace($student, '[\\/:*?"<>|\r\n]', '_')
+                $dFile = Join-Path $updDir "dictwrong\$safeName.json"
+                $result = @{ student = $student; items = @() }
+                try {
+                    if (Test-Path $dFile) {
+                        $parsed = [System.IO.File]::ReadAllText($dFile) | ConvertFrom-Json
                         if ($null -ne $parsed -and $null -ne $parsed.items) { $result.items = @($parsed.items) }
                     }
                 } catch {}
