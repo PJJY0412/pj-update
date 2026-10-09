@@ -9770,18 +9770,13 @@ if (mode === 'student') {
               } catch (e) {}
               let words = [];
               try {
-                var _tt = this._reportsDictTop || {open:false, subj:null};
-                if (_tt.open && _tt.subj === dd.subj) {
-                  words = (typeof dd.wordsOf === 'function') ? dd.wordsOf(dd.hw || []) : [];
-                  try { if (loc && loc._dictExp === undefined) loc._dictExp = {}; if (loc) loc._dictExp[dd.subj] = true; } catch(e) {}
-                }
-              } catch(e) {}
-
-              try {
-                if (dd.hw && dd.hw.manual && dd.hw.manual.length) words = dd.wordsOf(dd.hw) || [];
+                words = (dd.hw && typeof dd.wordsOf === 'function') ? (dd.wordsOf(dd.hw) || []) : [];
+                try { if (loc && loc._dictExp === undefined) loc._dictExp = {}; if (loc) loc._dictExp[dd.subj] = true; } catch(e) {}
               } catch (e) { words = []; }
               try {
-                if (this._dictCollapsed && this._dictCollapsed[loc.id + '|' + dd.subj]) words = [];
+                const _cmap = this._dictCollapsedMap();
+                const _csig = this._dictHwSig(dd.hw);
+                if (_csig && _cmap[loc.id + '|' + dd.subj] === _csig) words = [];
               } catch (e) {}
               const isZh = dd.subj === 'zh';
               const lastRes = Storage.getDictResult(loc.id, dd.subj);
@@ -9870,14 +9865,40 @@ if (mode === 'student') {
           if (stu) this._pushDictWrongFor(String(stu.name), String(stu.grade || Storage.getCurrentGrade(stu) || ''), sid);
           if (this._dictGrade) delete this._dictGrade[gk];
           try {
-            this._dictCollapsed = this._dictCollapsed || {};
-            this._dictCollapsed[gk] = true;
+            const _cmap = this._dictCollapsedMap();
+            const _hwObj = (subj === 'zh') ? Storage.getHomeworkDictZh(sid) : Storage.getHomeworkDictEn(sid);
+            const _sig = this._dictHwSig(_hwObj) || true;
+            _cmap[gk] = _sig;
+            localStorage.setItem('pjyx_dict_collapsed', JSON.stringify(_cmap));
           } catch (e) {}
           alert('已保存听写成绩：' + correct.length + '/' + total + ' 正确率 ' + accuracy + '%，错词已加入听写错词库。');
           this._renderReports(this._repItems);
         } catch (e) { alert('保存失败：' + (e && e.message ? e.message : String(e))); }
       });
     });
+  },
+
+  _dictHwSig(hw) {
+    try {
+      if (!hw || typeof hw !== 'object') return '';
+      const wl = (hw.wordKeys && hw.wordKeys.length) || 0;
+      const ml = (hw.manual && hw.manual.length) || 0;
+      return String(hw.assignedAt || '') + '#' + wl + '#' + ml;
+    } catch (e) { return ''; }
+  },
+
+  _dictCollapsedMap() {
+    try {
+      if (this._dictCollapsed && typeof this._dictCollapsed === 'object') return this._dictCollapsed;
+      let m = null;
+      try { m = JSON.parse(localStorage.getItem('pjyx_dict_collapsed') || '{}'); } catch (e) { m = null; }
+      if (!m || typeof m !== 'object') m = {};
+      this._dictCollapsed = m;
+      return m;
+    } catch (e) {
+      this._dictCollapsed = this._dictCollapsed || {};
+      return this._dictCollapsed;
+    }
   },
 
   _isArchivedReport(r) {
@@ -16013,9 +16034,14 @@ _ttsCancel() {
     });
     const removed = [];
     try {
+      const itemKeys = {};
+      items.forEach(it => { itemKeys[it.subj + '|' + String(it.text).trim()] = true; });
       const q = JSON.parse(localStorage.getItem('pjyx_dictremoved') || '{}');
       const entry = q[studName + '||' + (grade || '')];
-      if (Array.isArray(entry)) entry.forEach(c => { if (String(c).indexOf('|') > 0) removed.push(String(c)); });
+      if (Array.isArray(entry)) entry.forEach(c => {
+        const t = String(c);
+        if (t.indexOf('|') > 0 && !itemKeys[t]) removed.push(t);
+      });
     } catch (e) {}
     const body = JSON.stringify({ name: studName, grade: grade || '', items: items, removed: removed });
     return this._lanPost('http://' + host + ':8899/dictwrong', body)
@@ -16052,19 +16078,46 @@ _ttsCancel() {
         if (!r || !r.ok || !r.body) return false;
         let data = null;
         try { data = JSON.parse(r.body); } catch (e) {}
-        if (!data || !Array.isArray(data.items)) return false;
-        if (!data.items.length) return false;
+        if (!data) return false;
+        const remoteItems = Array.isArray(data.items) ? data.items : [];
+        const remoteRemoved = Array.isArray(data.removed) ? data.removed : [];
+        if (!remoteItems.length && !remoteRemoved.length) return false;
+        const stu = Storage.getStudents().find(function(s) { return String(s.id) === String(localSid); });
+        const grade = stu ? String(stu.grade || Storage.getCurrentGrade(stu) || '') : '';
         let changed = false;
         ['en', 'zh'].forEach(s => {
           const localMap = {};
           Storage.getDictWrong(localSid, s).forEach(x => { if (x) localMap[String(x.text).trim()] = x; });
           let dirty = false;
-          data.items.forEach(it => {
+          remoteItems.forEach(it => {
             if (!it || String(it.subj) !== s) return;
             const t = String(it.text || '').trim();
             if (!t || localMap[t]) return;
             localMap[t] = { text: t, addedAt: it.addedAt || new Date().toISOString() };
             dirty = true;
+          });
+          remoteRemoved.forEach(rm => {
+            let rk = '';
+            if (typeof rm === 'string') rk = rm;
+            else if (rm && rm.subj != null) rk = String(rm.subj) + '|' + String(rm.text == null ? '' : rm.text);
+            const bar = rk.indexOf('|');
+            if (bar < 1 || rk.slice(0, bar) !== s) return;
+            const str = rk.slice(bar + 1).trim();
+            if (!str || !localMap[str]) return;
+            const local = localMap[str];
+            const ra = (rm && rm.removedAt) ? String(rm.removedAt) : '';
+            const la = local && local.addedAt ? String(local.addedAt) : '';
+            let suppress = true;
+            if (la && ra) {
+              const ld = Date.parse(la), rd = Date.parse(ra);
+              if (!isNaN(ld) && !isNaN(rd) && ld > rd) suppress = false;
+            }
+            if (suppress) {
+              delete localMap[str];
+              dirty = true;
+              changed = true;
+              this._queueDictWrongRemoved(studName, grade, s, str);
+            }
           });
           if (dirty) {
             Storage.saveDictWrong(localSid, s, Object.values(localMap).filter(x => x && x.text));
@@ -16823,8 +16876,15 @@ _ttsCancel() {
         const hw = d.hw;
         if (d.subject === 'chinese') Storage.saveHomeworkZh(sid, hw);
         else if (d.subject === 'math') Storage.saveHomeworkMath(sid, hw);
-        else if (d.subject === 'dictZh') Storage.saveHomeworkDictZh(sid, hw);
-        else if (d.subject === 'dictEn') Storage.saveHomeworkDictEn(sid, hw);
+        else if (d.subject === 'dictZh' || d.subject === 'dictEn') {
+          const cur = d.subject === 'dictZh' ? Storage.getHomeworkDictZh(sid) : Storage.getHomeworkDictEn(sid);
+          const curAt = (cur && cur.assignedAt) ? String(cur.assignedAt) : '';
+          const newAt = String(hw.assignedAt || d.sentAt || '');
+          if (curAt && newAt && curAt >= newAt) return;
+          if (!newAt && curAt) return;
+          if (d.subject === 'dictZh') Storage.saveHomeworkDictZh(sid, hw);
+          else Storage.saveHomeworkDictEn(sid, hw);
+        }
         else Storage.saveHomework(sid, hw);
         applied++;
         try { this._tasksLog('作业 ' + d.subject + '→' + d.toName + ' 勾选' + ((d.hw.wordKeys || []).length) + ' 手动' + ((d.hw.manual || []).length) + ''); } catch (e) {}
@@ -17658,4 +17718,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20261009-1753';
+window.__SERVER_VER = '20261010-1754';
