@@ -5549,6 +5549,12 @@ main.innerHTML = html;
             fillRemote(arr);
           } catch (e) {}
         });
+        // 跨设备听写作业同步：拉到更新后仅当仍停留在"布置作业"页时重渲染（避免覆盖其他 tab 内容）
+        this._pullDictHomeFromLan((changed) => {
+          if (!changed) return;
+          const tab = document.getElementById('atab-homework');
+          if (tab && tab.classList.contains('active')) this._renderAdminHomework();
+        });
       }
     } catch (e) {}
   },
@@ -9363,6 +9369,46 @@ if (mode === 'student') {
     });
   },
 
+  // 从电脑接收器拉取跨设备布置的听写作业（dictEn/dictZh），按 姓名+年级 落到本平板对应学员的本地键。
+  // 仅当远端 assignedAt 较新才覆盖；host 缺失/熔断中立即 cb(false)；只读共享熔断 key，不写入（避免干扰 _lanReportPull/_lanTaskPull）
+  _pullDictHomeFromLan(cb) {
+    const done = (changed) => { try { cb(!!changed); } catch (e) {} };
+    let host = '';
+    try { host = this._getSavedHost() || ''; } catch (e) {}
+    if (!host) { done(false); return; }
+    let lastFail = 0;
+    try { lastFail = parseInt(localStorage.getItem('pjyx_lan_fail') || '0', 10) || 0; } catch (e) {}
+    if (Date.now() - lastFail < 120000) { done(false); return; }
+    this._lanGet('http://' + host + ':8899/task-dict', 6000).then(res => {
+      let changed = false;
+      try {
+        if (!res || !res.ok) { done(false); return; }
+        const j = JSON.parse(res.body || '{}');
+        const tasks = Array.isArray(j.tasks) ? j.tasks : [];
+        const roster = (typeof Storage.getSiteStudents === 'function') ? Storage.getSiteStudents() : Storage.getStudents();
+        const normG = (g) => String(g == null ? '' : g).replace(/年级/g, '').trim();
+        tasks.forEach(t => {
+          if (!t || !t.toName || !t.hw) return;
+          const subj = String(t.subject || '');
+          if (subj !== 'dictEn' && subj !== 'dictZh') return;
+          const tg = normG(t.grade || t.toGrade);
+          const stu = (roster || []).find(s => s && String(s.name) === String(t.toName) && normG(Storage.getCurrentGrade(s)) === tg);
+          if (!stu) return;
+          const isZh = (subj === 'dictZh');
+          const cur = isZh ? Storage.getHomeworkDictZh(stu.id) : Storage.getHomeworkDictEn(stu.id);
+          const curAt = (cur && cur.assignedAt) ? String(cur.assignedAt) : '';
+          const newAt = String(t.hw.assignedAt || t.sentAt || '');
+          if (curAt && newAt && curAt >= newAt) return;
+          if (!newAt && curAt) return;
+          if (isZh) Storage.saveHomeworkDictZh(stu.id, t.hw);
+          else Storage.saveHomeworkDictEn(stu.id, t.hw);
+          changed = true;
+        });
+      } catch (e) {}
+      done(changed);
+    });
+  },
+
   // 同步学员到电脑/云端；removedList 为本次(在线)删除，另合并持久化队列的离线删除，成功后清空已同步队列。
   // newStudents 为平板主动注册的新学员（receiver 据此清除墓碑、恢复建档资格），勿与全量同步混淆
   _pushStudentsToHost(removedList, newStudents) {
@@ -9606,6 +9652,10 @@ if (mode === 'student') {
             this._renderReports([]);
           }
         });
+    });
+    // 跨设备听写作业同步：拉到更新后重渲染（首次渲染可能已读到新数据，此时 changed 亦无害）
+    this._pullDictHomeFromLan((changed) => {
+      if (changed && this._repItems) this._renderReports(this._repItems);
     });
   },
 
@@ -17608,4 +17658,4 @@ document.addEventListener('click', function (e) {
 }, true);
 
 window.__OK_app = true;
-window.__SERVER_VER = '20261009-1752';
+window.__SERVER_VER = '20261009-1753';
