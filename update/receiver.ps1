@@ -2941,6 +2941,38 @@ Get-ChildItem -Path $gradeDir.FullName -Directory -ErrorAction SilentlyContinue 
             $payload = @{ ok = $true; count = $out.Count; tasks = $out } | ConvertTo-Json -Depth 8 -Compress
             Send-Response $stream '200 OK' 'application/json' $payload
         }
+        elseif ($method -eq 'GET' -and $pathOnly -eq '/task-dict') {
+            # 跨平板听写作业同步：任务缓存中每（姓名|年级|科目）仅取 assignedAt 最新一条，供其他老师平板拉回本地
+            $latest = @{}
+            if (Test-Path $taskFile) {
+                try {
+                    $parsed = [System.IO.File]::ReadAllText($taskFile) | ConvertFrom-Json
+                    if ($null -ne $parsed) {
+                        foreach ($r in @($parsed)) {
+                            if ($null -eq $r -or $null -eq $r.toName -or $null -eq $r.hw) { continue }
+                            $subj = [string]$r.subject
+                            if ($subj -ne 'dictEn' -and $subj -ne 'dictZh') { continue }
+                            $name = ([string]$r.toName).Trim()
+                            if (-not $name) { continue }
+                            $grade = ([string]$r.grade).Trim()
+                            if (-not $grade) { $grade = ([string]$r.toGrade).Trim() }
+                            $key = $name + '|' + $grade + '|' + $subj
+                            $at = ''
+                            if ($null -ne $r.hw.assignedAt) { $at = [string]$r.hw.assignedAt }
+                            if (-not $at) { $at = [string]$r.sentAt }
+                            if ($latest.ContainsKey($key)) {
+                                if ([string]::Compare($at, [string]$latest[$key].at, [System.StringComparison]::Ordinal) -le 0) { continue }
+                            }
+                            $latest[$key] = @{ at = $at; rec = $r }
+                        }
+                    }
+                } catch {}
+            }
+            $out = @()
+            foreach ($k in $latest.Keys) { $out += $latest[$k].rec }
+            $payload = @{ ok = $true; count = $out.Count; tasks = $out } | ConvertTo-Json -Depth 8 -Compress
+            Send-Response $stream '200 OK' 'application/json' $payload
+        }
         elseif ($method -eq 'POST' -and $pathOnly -eq '/answer-push') {
             $body = Read-Body $stream $contentLength
             $json = $null
