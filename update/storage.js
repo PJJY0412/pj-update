@@ -293,8 +293,10 @@ const Storage = {
       const d = new Date(createdAt);
       if (!isNaN(d.getTime())) created = d;
     }
+    let sid = Date.now() + Math.floor(Math.random() * 10000);
+    while (students.some(s => s && String(s.id) === String(sid))) sid = Date.now() + Math.floor(Math.random() * 10000);
     const student = {
-      id: Date.now(),
+      id: sid,
       name: name,
       grade: grade || 1,
       createdAt: created.toISOString(),
